@@ -1200,14 +1200,25 @@ J:				for ( int j = i + 1; j < range; )
 		
 		final Layer first = layerRange.get( 0 );
 		final List< Layer > layers = first.getParent().getLayers();
-		
+
+        final LayerSet ls = first.getParent();
         final List<VectorData> vectorData = new ArrayList<VectorData>();
-        vectorData.addAll(first.getParent().getAll(AreaList.class));
-        vectorData.addAll(first.getParent().getAll(Ball.class));
-        vectorData.addAll(first.getParent().getAll(Dissector.class));
-        vectorData.addAll(first.getParent().getAll(Pipe.class));
-        vectorData.addAll(first.getParent().getAll(Polyline.class));
-        vectorData.addAll(first.getParent().getAll(Tree.class));
+        for (final Layer layer : ls.getLayers()) {
+            vectorData.addAll(
+                    Utils.castCollection(layer.getDisplayables(VectorData.class, false, true),
+                            VectorData.class, true));
+        }
+        vectorData.addAll(Utils.castCollection(ls.getZDisplayables(VectorData.class, true),
+                VectorData.class, true));
+
+
+//
+//        vectorData.addAll(first.getParent().getAll(AreaList.class));
+//        vectorData.addAll(first.getParent().getAll(Ball.class));
+//        vectorData.addAll(first.getParent().getAll(Dissector.class));
+//        vectorData.addAll(first.getParent().getAll(Pipe.class));
+//        vectorData.addAll(first.getParent().getAll(Polyline.class));
+//        vectorData.addAll(first.getParent().getAll(Tree.class));
         
         Area infArea = AreaUtils.infiniteArea();
         
@@ -1219,7 +1230,13 @@ J:				for ( int j = i + 1; j < range; )
 				final MovingLeastSquaresTransform2 mlt = makeMLST2( meshes.get( 0 ).getVA().keySet() );
 				final int firstLayerIndex = first.getParent().getLayerIndex( first.getId() );
 				for ( int i = 0; i < firstLayerIndex; ++i )
+                {
 					applyTransformToLayer( layers.get( i ), mlt, filter );
+                    for (VectorData vectorDatum : vectorData)
+                    {
+                        vectorDatum.apply(layers.get(i), infArea, mlt);
+                    }
+                }
 			}
 			if ( propagateTransformAfter )
 			{
@@ -1227,7 +1244,13 @@ J:				for ( int j = i + 1; j < range; )
 				final MovingLeastSquaresTransform2 mlt = makeMLST2( meshes.get( meshes.size() - 1 ).getVA().keySet() );
 				final int lastLayerIndex = last.getParent().getLayerIndex( last.getId() );
 				for ( int i = lastLayerIndex + 1; i < layers.size(); ++i )
+                {
 					applyTransformToLayer( layers.get( i ), mlt, filter );
+                    for (VectorData vectorDatum : vectorData)
+                    {
+                        vectorDatum.apply(layers.get(i), infArea, mlt);
+                    }
+                }
 			}
 		}
 		for ( int l = 0; l < layerRange.size(); ++l )
