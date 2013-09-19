@@ -382,8 +382,6 @@ public class ElasticLayerAlignment
 	 * @param fixedLayers
 	 * @param emptyLayers
 	 * @param box
-	 * @param propagateTransform
-	 * @param fov
 	 * @param filter
 	 * @throws Exception
 	 */
@@ -399,7 +397,7 @@ public class ElasticLayerAlignment
 			final boolean propagateTransformAfter,
 			final Filter< Patch > filter ) throws Exception
 	{
-		final double scale = Math.min( 1.0, Math.min( ( double )param.ppm.sift.maxOctaveSize / ( double )box.width, ( double )param.ppm.sift.maxOctaveSize / ( double )box.height ) );
+
 		
 		
 		/* create tiles and models for all layers */
@@ -434,211 +432,8 @@ public class ElasticLayerAlignment
 		
 		if ( !param.isAligned )
 		{
-		
-			/* extract and save features, overwrite cached files if requested */
-			try
-			{
-				AlignmentUtils.extractAndSaveLayerFeatures( layerRange, box, scale, filter, param.ppm.sift, param.ppm.clearCache, param.ppm.maxNumThreadsSift );
-			}
-			catch ( final Exception e )
-			{
-				return;
-			}
-		
-			/* match and filter feature correspondences */
-			int numFailures = 0;
-			
-			final double pointMatchScale = param.layerScale / scale;
-			
-			for ( int i = 0; i < layerRange.size(); ++i )
-			{
-				final ArrayList< Thread > threads = new ArrayList< Thread >( param.maxNumThreads );
-				
-				final int sliceA = i;
-				final Layer layerA = layerRange.get( i );
-				final int range = Math.min( layerRange.size(), i + param.maxNumNeighbors + 1 );
-				
-				final String layerNameA = layerName( layerA );
-				
-J:				for ( int j = i + 1; j < range; )
-				{
-					final int numThreads = Math.min( param.maxNumThreads, range - j );
-					final ArrayList< Triple< Integer, Integer, AbstractModel< ? > > > models =
-						new ArrayList< Triple< Integer, Integer, AbstractModel< ? > > >( numThreads );
-					
-					for ( int k = 0; k < numThreads; ++k )
-						models.add( null );
-					
-					for ( int t = 0;  t < numThreads && j < range; ++t, ++j )
-					{
-						final int ti = t;
-						final int sliceB = j;
-						final Layer layerB = layerRange.get( j );
-						
-						final String layerNameB = layerName( layerB );
-						
-						final Thread thread = new Thread()
-						{
-							@Override
-							public void run()
-							{
-								IJ.showProgress( sliceA, layerRange.size() - 1 );
-								
-								Utils.log( "matching " + layerNameB + " -> " + layerNameA + "..." );
-								
-								ArrayList< PointMatch > candidates = null;
-								if ( !param.ppm.clearCache )
-									candidates = mpicbg.trakem2.align.Util.deserializePointMatches(
-											project, param.ppm, "layer", layerB.getId(), layerA.getId() );
-								
-								if ( null == candidates )
-								{
-									final ArrayList< Feature > fs1 = mpicbg.trakem2.align.Util.deserializeFeatures(
-											project, param.ppm.sift, "layer", layerA.getId() );
-									final ArrayList< Feature > fs2 = mpicbg.trakem2.align.Util.deserializeFeatures(
-											project, param.ppm.sift, "layer", layerB.getId() );
-									candidates = new ArrayList< PointMatch >( FloatArray2DSIFT.createMatches( fs2, fs1, param.ppm.rod ) );
-									
-									/* scale the candidates */
-									for ( final PointMatch pm : candidates )
-									{
-										final Point p1 = pm.getP1();
-										final Point p2 = pm.getP2();
-										final float[] l1 = p1.getL();
-										final float[] w1 = p1.getW();
-										final float[] l2 = p2.getL();
-										final float[] w2 = p2.getW();
-										
-										l1[ 0 ] *= pointMatchScale;
-										l1[ 1 ] *= pointMatchScale;
-										w1[ 0 ] *= pointMatchScale;
-										w1[ 1 ] *= pointMatchScale;
-										l2[ 0 ] *= pointMatchScale;
-										l2[ 1 ] *= pointMatchScale;
-										w2[ 0 ] *= pointMatchScale;
-										w2[ 1 ] *= pointMatchScale;
-										
-									}
-									
-									if ( !mpicbg.trakem2.align.Util.serializePointMatches(
-											project, param.ppm, "layer", layerB.getId(), layerA.getId(), candidates ) )
-										Utils.log( "Could not store point match candidates for layers " + layerNameB + " and " + layerNameA + "." );
-								}
-			
-								AbstractModel< ? > model;
-								switch ( param.expectedModelIndex )
-								{
-								case 0:
-									model = new TranslationModel2D();
-									break;
-								case 1:
-									model = new RigidModel2D();
-									break;
-								case 2:
-									model = new SimilarityModel2D();
-									break;
-								case 3:
-									model = new AffineModel2D();
-									break;
-								case 4:
-									model = new HomographyModel2D();
-									break;
-								default:
-									return;
-								}
-								
-								final ArrayList< PointMatch > inliers = new ArrayList< PointMatch >();
-								
-								boolean modelFound;
-								boolean again = false;
-								try
-								{
-									do
-									{
-										again = false;
-										modelFound = model.filterRansac(
-													candidates,
-													inliers,
-													1000,
-													param.maxEpsilon * param.layerScale,
-													param.minInlierRatio,
-													param.minNumInliers,
-													3 );
-										if ( modelFound && param.rejectIdentity )
-										{
-											final ArrayList< Point > points = new ArrayList< Point >();
-											PointMatch.sourcePoints( inliers, points );
-											if ( Transforms.isIdentity( model, points, param.identityTolerance *  param.layerScale ) )
-											{
-												IJ.log( "Identity transform for " + inliers.size() + " matches rejected." );
-												candidates.removeAll( inliers );
-												inliers.clear();
-												again = true;
-											}
-										}
-									}
-									while ( again );
-								}
-								catch ( final NotEnoughDataPointsException e )
-								{
-									modelFound = false;
-								}
-								
-								if ( modelFound )
-								{
-									Utils.log( layerNameB + " -> " + layerNameA + ": " + inliers.size() + " corresponding features with an average displacement of " + ( PointMatch.meanDistance( inliers ) / param.layerScale ) + "px identified." );
-									Utils.log( "Estimated transformation model: " + model );
-									models.set( ti, new Triple< Integer, Integer, AbstractModel< ? > >( sliceA, sliceB, model ) );
-								}
-								else
-								{
-									Utils.log( layerNameB + " -> " + layerNameA + ": no correspondences found." );
-									return;
-								}
-							}
-						};
-						threads.add( thread );
-						thread.start();
-					}
-					
-					try
-					{
-						for ( final Thread thread : threads )
-							thread.join();
-					}
-					catch ( final InterruptedException e )
-					{
-						Utils.log( "Establishing feature correspondences interrupted." );
-						for ( final Thread thread : threads )
-							thread.interrupt();
-						try
-						{
-							for ( final Thread thread : threads )
-								thread.join();
-						}
-						catch ( final InterruptedException f ) {}
-						return;
-					}
-					
-					threads.clear();
-					
-					/* collect successfully matches pairs and break the search on gaps */
-					for ( int t = 0; t < models.size(); ++t )
-					{
-						final Triple< Integer, Integer, AbstractModel< ? > > pair = models.get( t );
-						if ( pair == null )
-						{
-							if ( ++numFailures > param.maxNumFailures )
-								break J;
-						}
-						else
-						{
-							numFailures = 0;
-							pairs.add( pair );
-						}
-					}
-				}
-			}
+		    preAlignStack(param, project, layerRange, box, filter, pairs);
+
 		}
 		else
 		{
@@ -663,6 +458,7 @@ J:				for ( int j = i + 1; j < range; )
 		
 		final ArrayList< SpringMesh > meshes = new ArrayList< SpringMesh >( layerRange.size() );
 		for ( int i = 0; i < layerRange.size(); ++i )
+        {
 			meshes.add(
 					new SpringMesh(
 							param.resolutionSpringMesh,
@@ -671,6 +467,7 @@ J:				for ( int j = i + 1; j < range; )
 							param.stiffnessSpringMesh,
 							param.maxStretchSpringMesh * param.layerScale,
 							param.dampSpringMesh ) );
+        }
 		
 		//final int blockRadius = Math.max( 32, meshWidth / p.resolutionSpringMesh / 2 );
 		final int blockRadius = Math.max( 16, mpicbg.util.Util.roundPos( param.layerScale * param.blockRadius ) );
@@ -1165,7 +962,222 @@ J:				for ( int j = i + 1; j < range; )
 		
 		exec( p.clone(), project, layerRange, fixedLayers, emptyLayers, box, propagateTransformBefore, propagateTransformAfter, filter );
 	}
-	
+
+    private void preAlignStack(final Param param, final Project project,
+                               final List<Layer> layerRange, final Rectangle box,
+                               final Filter<Patch> filter,
+                               final ArrayList< Triple< Integer, Integer, AbstractModel< ? > > > pairs)
+    {
+        final double scale = Math.min( 1.0, Math.min( ( double )param.ppm.sift.maxOctaveSize / ( double )box.width, ( double )param.ppm.sift.maxOctaveSize / ( double )box.height ) );
+
+        /* extract and save features, overwrite cached files if requested */
+        try
+        {
+            AlignmentUtils.extractAndSaveLayerFeatures( layerRange, box, scale, filter, param.ppm.sift, param.ppm.clearCache, param.ppm.maxNumThreadsSift );
+        }
+        catch ( final Exception e )
+        {
+            return;
+        }
+
+        /* match and filter feature correspondences */
+        int numFailures = 0;
+
+        final double pointMatchScale = param.layerScale / scale;
+
+        for ( int i = 0; i < layerRange.size(); ++i )
+        {
+            final ArrayList< Thread > threads = new ArrayList< Thread >( param.maxNumThreads );
+
+            final int sliceA = i;
+            final Layer layerA = layerRange.get( i );
+            final int range = Math.min( layerRange.size(), i + param.maxNumNeighbors + 1 );
+
+            final String layerNameA = layerName( layerA );
+
+            for ( int j = i + 1; j < range; )
+J:            {
+                final int numThreads = Math.min( param.maxNumThreads, range - j );
+                final ArrayList< Triple< Integer, Integer, AbstractModel< ? > > > models =
+                        new ArrayList< Triple< Integer, Integer, AbstractModel< ? > > >( numThreads );
+
+                for ( int k = 0; k < numThreads; ++k )
+                    models.add( null );
+
+                for ( int t = 0;  t < numThreads && j < range; ++t, ++j )
+                {
+                    final int ti = t;
+                    final int sliceB = j;
+                    final Layer layerB = layerRange.get( j );
+
+                    final String layerNameB = layerName( layerB );
+
+                    final Thread thread = new Thread()
+                    {
+                        @Override
+                        public void run()
+                        {
+                            IJ.showProgress( sliceA, layerRange.size() - 1 );
+
+                            Utils.log( "matching " + layerNameB + " -> " + layerNameA + "..." );
+
+                            ArrayList< PointMatch > candidates = null;
+                            if ( !param.ppm.clearCache )
+                                candidates = mpicbg.trakem2.align.Util.deserializePointMatches(
+                                        project, param.ppm, "layer", layerB.getId(), layerA.getId() );
+
+                            if ( null == candidates )
+                            {
+                                final ArrayList< Feature > fs1 = mpicbg.trakem2.align.Util.deserializeFeatures(
+                                        project, param.ppm.sift, "layer", layerA.getId() );
+                                final ArrayList< Feature > fs2 = mpicbg.trakem2.align.Util.deserializeFeatures(
+                                        project, param.ppm.sift, "layer", layerB.getId() );
+                                candidates = new ArrayList< PointMatch >( FloatArray2DSIFT.createMatches( fs2, fs1, param.ppm.rod ) );
+
+                                /* scale the candidates */
+                                for ( final PointMatch pm : candidates )
+                                {
+                                    final Point p1 = pm.getP1();
+                                    final Point p2 = pm.getP2();
+                                    final float[] l1 = p1.getL();
+                                    final float[] w1 = p1.getW();
+                                    final float[] l2 = p2.getL();
+                                    final float[] w2 = p2.getW();
+
+                                    l1[ 0 ] *= pointMatchScale;
+                                    l1[ 1 ] *= pointMatchScale;
+                                    w1[ 0 ] *= pointMatchScale;
+                                    w1[ 1 ] *= pointMatchScale;
+                                    l2[ 0 ] *= pointMatchScale;
+                                    l2[ 1 ] *= pointMatchScale;
+                                    w2[ 0 ] *= pointMatchScale;
+                                    w2[ 1 ] *= pointMatchScale;
+
+                                }
+
+                                if ( !mpicbg.trakem2.align.Util.serializePointMatches(
+                                        project, param.ppm, "layer", layerB.getId(), layerA.getId(), candidates ) )
+                                    Utils.log( "Could not store point match candidates for layers " + layerNameB + " and " + layerNameA + "." );
+                            }
+
+                            AbstractModel< ? > model;
+                            switch ( param.expectedModelIndex )
+                            {
+                                case 0:
+                                    model = new TranslationModel2D();
+                                    break;
+                                case 1:
+                                    model = new RigidModel2D();
+                                    break;
+                                case 2:
+                                    model = new SimilarityModel2D();
+                                    break;
+                                case 3:
+                                    model = new AffineModel2D();
+                                    break;
+                                case 4:
+                                    model = new HomographyModel2D();
+                                    break;
+                                default:
+                                    return;
+                            }
+
+                            final ArrayList< PointMatch > inliers = new ArrayList< PointMatch >();
+
+                            boolean modelFound;
+                            boolean again = false;
+                            try
+                            {
+                                do
+                                {
+                                    again = false;
+                                    modelFound = model.filterRansac(
+                                            candidates,
+                                            inliers,
+                                            1000,
+                                            param.maxEpsilon * param.layerScale,
+                                            param.minInlierRatio,
+                                            param.minNumInliers,
+                                            3 );
+                                    if ( modelFound && param.rejectIdentity )
+                                    {
+                                        final ArrayList< Point > points = new ArrayList< Point >();
+                                        PointMatch.sourcePoints( inliers, points );
+                                        if ( Transforms.isIdentity( model, points, param.identityTolerance *  param.layerScale ) )
+                                        {
+                                            IJ.log( "Identity transform for " + inliers.size() + " matches rejected." );
+                                            candidates.removeAll( inliers );
+                                            inliers.clear();
+                                            again = true;
+                                        }
+                                    }
+                                }
+                                while ( again );
+                            }
+                            catch ( final NotEnoughDataPointsException e )
+                            {
+                                modelFound = false;
+                            }
+
+                            if ( modelFound )
+                            {
+                                Utils.log( layerNameB + " -> " + layerNameA + ": " + inliers.size() + " corresponding features with an average displacement of " + ( PointMatch.meanDistance( inliers ) / param.layerScale ) + "px identified." );
+                                Utils.log( "Estimated transformation model: " + model );
+                                models.set( ti, new Triple< Integer, Integer, AbstractModel< ? > >( sliceA, sliceB, model ) );
+                            }
+                            else
+                            {
+                                Utils.log( layerNameB + " -> " + layerNameA + ": no correspondences found." );
+                                return;
+                            }
+                        }
+                    };
+                    threads.add( thread );
+                    thread.start();
+                }
+
+                try
+                {
+                    for ( final Thread thread : threads )
+                        thread.join();
+                }
+                catch ( final InterruptedException e )
+                {
+                    Utils.log( "Establishing feature correspondences interrupted." );
+                    for ( final Thread thread : threads )
+                        thread.interrupt();
+                    try
+                    {
+                        for ( final Thread thread : threads )
+                            thread.join();
+                    }
+                    catch ( final InterruptedException f ) {}
+                    return;
+                }
+
+                threads.clear();
+
+                /* collect successfully matches pairs and break the search on gaps */
+                for ( int t = 0; t < models.size(); ++t )
+                {
+                    final Triple< Integer, Integer, AbstractModel< ? > > pair = models.get( t );
+                    if ( pair == null )
+                    {
+                        if ( ++numFailures > param.maxNumFailures )
+                        {
+                            break J;
+                        }
+                    }
+                    else
+                    {
+                        numFailures = 0;
+                        pairs.add( pair );
+                    }
+                }
+            }
+        }
+    }
+
 
 	/**
 	 * Stateful.  Changing the parameters of this instance.  Do not use in parallel.
