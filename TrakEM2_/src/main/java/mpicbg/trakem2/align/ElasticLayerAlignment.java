@@ -38,6 +38,8 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import mpicbg.ij.blockmatching.BlockMatching;
@@ -60,6 +62,8 @@ import mpicbg.models.TileConfiguration;
 import mpicbg.models.Transforms;
 import mpicbg.models.TranslationModel2D;
 import mpicbg.models.Vertex;
+import mpicbg.trakem2.align.concurrent.BlockMatchPairCallable;
+import mpicbg.trakem2.align.concurrent.SynchronizeBlockMatchFuture;
 import mpicbg.trakem2.transform.MovingLeastSquaresTransform2;
 import mpicbg.trakem2.util.Triple;
 
@@ -398,7 +402,8 @@ public class ElasticLayerAlignment
 			final boolean propagateTransformAfter,
 			final Filter< Patch > filter ) throws Exception
 	{
-
+        ExecutorService service =
+                Executors.newFixedThreadPool(1);
 		
 		
 		/* create tiles and models for all layers */
@@ -475,14 +480,10 @@ public class ElasticLayerAlignment
 		final int blockRadius = Math.max( 16, mpicbg.util.Util.roundPos( param.layerScale * param.blockRadius ) );
 		
 		Utils.log( "effective block radius = " + blockRadius );
-		
-		/* scale pixel distances */
-		final int searchRadius = ( int )Math.round( param.layerScale * param.searchRadius );
-		final float localRegionSigma = param.layerScale * param.localRegionSigma;
-		final float maxLocalEpsilon = param.layerScale * param.maxLocalEpsilon;
-		
-		final AbstractModel< ? > localSmoothnessFilterModel = Util.createModel( param.localModelIndex );
-		
+
+        final ArrayList<SynchronizeBlockMatchFuture> futures =
+                new ArrayList<SynchronizeBlockMatchFuture>(pairs.size());
+
 		
 		for ( final Triple< Integer, Integer, AbstractModel< ? > > pair : pairs )
 		{
@@ -492,221 +493,103 @@ public class ElasticLayerAlignment
 			final SpringMesh m1 = meshes.get( pair.a );
 			final SpringMesh m2 = meshes.get( pair.b );
 
-			final ArrayList< PointMatch > pm12 = new ArrayList< PointMatch >();
-			final ArrayList< PointMatch > pm21 = new ArrayList< PointMatch >();
 
 			final ArrayList< Vertex > v1 = m1.getVertices();
 			final ArrayList< Vertex > v2 = m2.getVertices();
-			
+
 			final Layer layer1 = layerRange.get( pair.a );
 			final Layer layer2 = layerRange.get( pair.b );
-			
-			final boolean layer1Fixed = fixedLayers.contains( layer1 );
-			final boolean layer2Fixed = fixedLayers.contains( layer2 );
-			
-			final Tile< ? > t1 = tiles.get( pair.a );
-			final Tile< ? > t2 = tiles.get( pair.b );
-			
+
+			final boolean layer1Fixed = fixedLayers.contains(layer1);
+			final boolean layer2Fixed = fixedLayers.contains(layer2);
+
+
 			if ( !( layer1Fixed && layer2Fixed ) )
 			{
-				final Image img1 = project.getLoader().getFlatAWTImage(
-						layer1,
-						box,
-						param.layerScale,
-						0xffffffff,
-						ImagePlus.COLOR_RGB,
-						Patch.class,
-						AlignmentUtils.filterPatches( layer1, filter ),
-						true,
-						new Color( 0x00ffffff, true ) );
-				
-				final Image img2 = project.getLoader().getFlatAWTImage(
-						layer2,
-						box,
-						param.layerScale,
-						0xffffffff,
-						ImagePlus.COLOR_RGB,
-						Patch.class,
-						AlignmentUtils.filterPatches( layer2, filter ),
-						true,
-						new Color( 0x00ffffff, true ) );
-				
-				final int width = img1.getWidth( null );
-				final int height = img1.getHeight( null );
-	
-				final FloatProcessor ip1 = new FloatProcessor( width, height );
-				final FloatProcessor ip2 = new FloatProcessor( width, height );
-				final FloatProcessor ip1Mask = new FloatProcessor( width, height );
-				final FloatProcessor ip2Mask = new FloatProcessor( width, height );
-				
-				mpicbg.trakem2.align.Util.imageToFloatAndMask( img1, ip1, ip1Mask );
-				mpicbg.trakem2.align.Util.imageToFloatAndMask( img2, ip2, ip2Mask );
-				
-				final float springConstant  = 1.0f / ( pair.b - pair.a );
-				
-				if ( layer1Fixed )
-					initMeshes.fixTile( t1 );
-				else
-				{
-					try
-					{
-						BlockMatching.matchByMaximalPMCC(
-								ip1,
-								ip2,
-								ip1Mask,
-								ip2Mask,
-								1.0f,
-								( ( InvertibleCoordinateTransform )pair.c ).createInverse(),
-								blockRadius,
-								blockRadius,
-								searchRadius,
-								searchRadius,
-								param.minR,
-								param.rodR,
-								param.maxCurvatureR,
-								v1,
-								pm12,
-								new ErrorStatistic( 1 ) );
-					}
-					catch ( final InterruptedException e )
-					{
-						Utils.log( "Block matching interrupted." );
-						IJ.showProgress( 1.0 );
-						return;
-					}
-					if ( Thread.interrupted() )
-					{
-						Utils.log( "Block matching interrupted." );
-						IJ.showProgress( 1.0 );
-						return;
-					}
-		
-					if ( param.useLocalSmoothnessFilter )
-					{
-						Utils.log( pair.a + " > " + pair.b + ": found " + pm12.size() + " correspondence candidates." );
-						localSmoothnessFilterModel.localSmoothnessFilter( pm12, pm12, localRegionSigma, maxLocalEpsilon, param.maxLocalTrust );
-						Utils.log( pair.a + " > " + pair.b + ": " + pm12.size() + " candidates passed local smoothness filter." );
-					}
-					else
-					{
-						Utils.log( pair.a + " > " + pair.b + ": found " + pm12.size() + " correspondences." );
-					}
-		
-					/* <visualisation> */
-					//			final List< Point > s1 = new ArrayList< Point >();
-					//			PointMatch.sourcePoints( pm12, s1 );
-					//			final ImagePlus imp1 = new ImagePlus( i + " >", ip1 );
-					//			imp1.show();
-					//			imp1.setOverlay( BlockMatching.illustrateMatches( pm12 ), Color.yellow, null );
-					//			imp1.setRoi( Util.pointsToPointRoi( s1 ) );
-					//			imp1.updateAndDraw();
-					/* </visualisation> */
-					
-					for ( final PointMatch pm : pm12 )
-					{
-						final Vertex p1 = ( Vertex )pm.getP1();
-						final Vertex p2 = new Vertex( pm.getP2() );
-						p1.addSpring( p2, new Spring( 0, springConstant ) );
-						m2.addPassiveVertex( p2 );
-					}
-					
-					/*
-					 * adding Tiles to the initialing TileConfiguration, adding a Tile
-					 * multiple times does not harm because the TileConfiguration is
-					 * backed by a Set. 
-					 */
-					if ( pm12.size() > pair.c.getMinNumMatches() )
-					{
-						initMeshes.addTile( t1 );
-						initMeshes.addTile( t2 );
-						t1.connect( t2, pm12 );
-					}
-				}
-	
-				if ( layer2Fixed )
-					initMeshes.fixTile( t2 );
-				else
-				{
-					try
-					{
-						BlockMatching.matchByMaximalPMCC(
-								ip2,
-								ip1,
-								ip2Mask,
-								ip1Mask,
-								1.0f,
-								pair.c,
-								blockRadius,
-								blockRadius,
-								searchRadius,
-								searchRadius,
-								param.minR,
-								param.rodR,
-								param.maxCurvatureR,
-								v2,
-								pm21,
-								new ErrorStatistic( 1 ) );
-					}
-					catch ( final InterruptedException e )
-					{
-						Utils.log( "Block matching interrupted." );
-						IJ.showProgress( 1.0 );
-						return;
-					}
-					if ( Thread.interrupted() )
-					{
-						Utils.log( "Block matching interrupted." );
-						IJ.showProgress( 1.0 );
-						return;
-					}
-		
-					if ( param.useLocalSmoothnessFilter )
-					{
-						Utils.log( pair.a + " < " + pair.b + ": found " + pm21.size() + " correspondence candidates." );
-						localSmoothnessFilterModel.localSmoothnessFilter( pm21, pm21, localRegionSigma, maxLocalEpsilon, param.maxLocalTrust );
-						Utils.log( pair.a + " < " + pair.b + ": " + pm21.size() + " candidates passed local smoothness filter." );
-					}
-					else
-					{
-						Utils.log( pair.a + " < " + pair.b + ": found " + pm21.size() + " correspondences." );
-					}
-					
-					/* <visualisation> */
-					//			final List< Point > s2 = new ArrayList< Point >();
-					//			PointMatch.sourcePoints( pm21, s2 );
-					//			final ImagePlus imp2 = new ImagePlus( i + " <", ip2 );
-					//			imp2.show();
-					//			imp2.setOverlay( BlockMatching.illustrateMatches( pm21 ), Color.yellow, null );
-					//			imp2.setRoi( Util.pointsToPointRoi( s2 ) );
-					//			imp2.updateAndDraw();
-					/* </visualisation> */
-					
-					for ( final PointMatch pm : pm21 )
-					{
-						final Vertex p1 = ( Vertex )pm.getP1();
-						final Vertex p2 = new Vertex( pm.getP2() );
-						p1.addSpring( p2, new Spring( 0, springConstant ) );
-						m1.addPassiveVertex( p2 );
-					}
-					
-					/*
-					 * adding Tiles to the initialing TileConfiguration, adding a Tile
-					 * multiple times does not harm because the TileConfiguration is
-					 * backed by a Set. 
-					 */
-					if ( pm21.size() > pair.c.getMinNumMatches() )
-					{
-						initMeshes.addTile( t1 );
-						initMeshes.addTile( t2 );
-						t2.connect( t1, pm21 );
-					}
-				}
-				
-				Utils.log( pair.a + " <> " + pair.b + " spring constant = " + springConstant );
-			}
-		}
-		
-		/* pre-align by optimizing a piecewise linear model */ 
+                BlockMatchPairCallable bmpc = new BlockMatchPairCallable(
+                        pair,
+                        layerRange,
+                        layer1Fixed, layer2Fixed,
+                        filter,
+                        param,
+                        v1, v2,
+                        box);
+                futures.add(new SynchronizeBlockMatchFuture(service.submit(bmpc), v1, v2));
+            }
+        }
+
+        for (final SynchronizeBlockMatchFuture future : futures)
+        {
+            final BlockMatchPairCallable.BlockMatchResults results = future.getFuture().get();
+            final Collection<PointMatch> pm12 = results.pm12, pm21 = results.pm21;
+            final Triple<Integer, Integer, AbstractModel<?>> pair = results.pair;
+            final Tile< ? > t1 = tiles.get( pair.a );
+            final Tile< ? > t2 = tiles.get( pair.b );
+            final SpringMesh m1 = meshes.get( pair.a );
+            final SpringMesh m2 = meshes.get( pair.b );
+            final float springConstant  = 1.0f / ( pair.b - pair.a );
+            final boolean layer1Fixed = results.layer1Fixed;
+            final boolean layer2Fixed = results.layer2Fixed;
+
+            if (layer1Fixed)
+            {
+                initMeshes.fixTile( t1 );
+            }
+            else
+            {
+                for ( final PointMatch pm : pm12 )
+                {
+                    final Vertex p1 = ( Vertex )pm.getP1();
+                    final Vertex p2 = new Vertex( pm.getP2() );
+                    p1.addSpring( p2, new Spring( 0, springConstant ) );
+                    m2.addPassiveVertex( p2 );
+                }
+
+                /*
+                * adding Tiles to the initialing TileConfiguration, adding a Tile
+                * multiple times does not harm because the TileConfiguration is
+                * backed by a Set.
+                */
+                if ( pm12.size() > pair.c.getMinNumMatches() )
+                {
+                    initMeshes.addTile( t1 );
+                    initMeshes.addTile( t2 );
+                    t1.connect( t2, pm12 );
+                }
+            }
+
+
+            if ( layer2Fixed )
+                initMeshes.fixTile( t2 );
+            else
+            {
+
+                for ( final PointMatch pm : pm21 )
+                {
+                    final Vertex p1 = ( Vertex )pm.getP1();
+                    final Vertex p2 = new Vertex( pm.getP2() );
+                    p1.addSpring( p2, new Spring( 0, springConstant ) );
+                    m1.addPassiveVertex( p2 );
+                }
+
+                /*
+                * adding Tiles to the initialing TileConfiguration, adding a Tile
+                * multiple times does not harm because the TileConfiguration is
+                * backed by a Set.
+                */
+                if ( pm21.size() > pair.c.getMinNumMatches() )
+                {
+                    initMeshes.addTile( t1 );
+                    initMeshes.addTile( t2 );
+                    t2.connect( t1, pm21 );
+                }
+            }
+
+            Utils.log( pair.a + " <> " + pair.b + " spring constant = " + springConstant );
+
+        }
+
+        /* pre-align by optimizing a piecewise linear model */
 		initMeshes.optimize(
 				param.maxEpsilon * param.layerScale,
 				param.maxIterationsSpringMesh,
@@ -1316,25 +1199,5 @@ J:            {
         return to;
     }
 
-    public void syncPoints(final List<? extends Point> toSync,
-                           final Collection<? extends Point> fromSync)
-    {
-        int i = 0;
-        IJ.log("Syncing points");
-        for (final Point from : fromSync)
-        {
-            final Point to = toSync.get(i++);
-            final float[] wTo = to.getW(), wFrom = from.getW(),
-                    lTo = to.getL(), lFrom = from.getL();
 
-            for (int j = 0; j < wTo.length; ++j)
-            {
-                wTo[j] = wFrom[j];
-            }
-            for (int j = 0; j < lTo.length; ++j)
-            {
-                lTo[j] = lFrom[j];
-            }
-        }
-    }
 }
