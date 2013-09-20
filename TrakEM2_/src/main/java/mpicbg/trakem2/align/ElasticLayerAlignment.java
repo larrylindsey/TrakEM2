@@ -33,6 +33,7 @@ import java.awt.Image;
 import java.awt.Rectangle;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -420,13 +421,13 @@ public class ElasticLayerAlignment
 		}
 		
 		/* collect all pairs of slices for which a model could be found */
-		final ArrayList< Triple< Integer, Integer, AbstractModel< ? > > > pairs = new ArrayList< Triple< Integer, Integer, AbstractModel< ? > > >();
+		final ArrayList< Triple< Integer, Integer, AbstractModel< ? > > > pairs =
+                new ArrayList< Triple< Integer, Integer, AbstractModel< ? > > >();
 		
 		
 		if ( !param.isAligned )
 		{
 		    preAlignStack(param, project, layerRange, box, filter, pairs);
-
 		}
 		else
 		{
@@ -436,7 +437,8 @@ public class ElasticLayerAlignment
 				
 				for ( int j = i + 1; j < range; ++j )
 				{
-					pairs.add( new Triple< Integer, Integer, AbstractModel< ? > >( i, j, new TranslationModel2D() ) );
+					pairs.add(new Triple< Integer, Integer, AbstractModel< ? > >(
+                            i, j, new TranslationModel2D() ) );
 				}
 			}
 		}
@@ -1261,4 +1263,58 @@ J:            {
 		
 		exec( layerSet.getProject(), layerRange, fixedLayers, propagateTransformBefore, propagateTransformAfter, fov, filter );
 	}
+
+    private static class CopyableVertex extends Vertex
+    {
+
+        public CopyableVertex(final Vertex vertex) {
+            super(vertex);
+            for (int i = 0; i < direction.length; ++i)
+            {
+                direction[i] = vertex.getDirection()[i];
+                force[i] = vertex.getForces()[i];
+            }
+
+            forceAmplitude = vertex.getForce();
+            speed = vertex.getSpeed();
+
+            for (Vertex v : vertex.getConnectedVertices())
+            {
+                springs.put(v, vertex.getSpring(v));
+            }
+
+        }
+    }
+
+    public ArrayList<Vertex> copyVertices(final Collection<Vertex> from)
+    {
+        final ArrayList<Vertex> to = new ArrayList<Vertex>(from.size());
+        for (Vertex v : from)
+        {
+            to.add(new CopyableVertex(v));
+        }
+        return to;
+    }
+
+    public void syncPoints(final List<? extends Point> toSync,
+                           final Collection<? extends Point> fromSync)
+    {
+        int i = 0;
+        IJ.log("Syncing points");
+        for (final Point from : fromSync)
+        {
+            final Point to = toSync.get(i++);
+            final float[] wTo = to.getW(), wFrom = from.getW(),
+                    lTo = to.getL(), lFrom = from.getL();
+
+            for (int j = 0; j < wTo.length; ++j)
+            {
+                wTo[j] = wFrom[j];
+            }
+            for (int j = 0; j < lTo.length; ++j)
+            {
+                lTo[j] = lFrom[j];
+            }
+        }
+    }
 }
