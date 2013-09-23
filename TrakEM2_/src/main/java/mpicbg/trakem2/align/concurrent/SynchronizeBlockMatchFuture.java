@@ -24,29 +24,24 @@ public class SynchronizeBlockMatchFuture
         this.v2 = v2;
     }
 
-    public List<? extends Point> getV1() throws InterruptedException, ExecutionException
+    public BlockMatchPairCallable.BlockMatchResults getResults()
+            throws InterruptedException, ExecutionException
     {
-        final BlockMatchPairCallable.BlockMatchResults results = future.get();
+        BlockMatchPairCallable.BlockMatchResults results = future.get();
+
         if (results.v1 != v1)
         {
             syncPoints(v1, results.v1);
+            results.v1 = v1;
         }
-        return v1;
-    }
 
-    public List<? extends Point> getV2() throws InterruptedException, ExecutionException
-    {
-        final BlockMatchPairCallable.BlockMatchResults results = future.get();
         if (results.v2 != v2)
         {
             syncPoints(v2, results.v2);
+            results.v2 = v2;
         }
-        return v2;
-    }
 
-    public Future<BlockMatchPairCallable.BlockMatchResults> getFuture()
-    {
-        return future;
+        return results;
     }
 
     public static void syncPoints(final List<? extends Point> toSync,
