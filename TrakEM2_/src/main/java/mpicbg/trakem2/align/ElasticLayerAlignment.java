@@ -513,7 +513,7 @@ public class ElasticLayerAlignment
 
         for (final SynchronizeBlockMatchFuture future : futures)
         {
-            final BlockMatchPairCallable.BlockMatchResults results = future.getFuture().get();
+            final BlockMatchPairCallable.BlockMatchResults results = future.getResults();
             final Collection<PointMatch> pm12 = results.pm12, pm21 = results.pm21;
             final Triple<Integer, Integer, AbstractModel<?>> pair = results.pair;
             final Tile< ? > t1 = tiles.get( pair.a );
@@ -530,6 +530,17 @@ public class ElasticLayerAlignment
             }
             else
             {
+                if ( param.useLocalSmoothnessFilter )
+                {
+                    Utils.log( pair.a + " > " + pair.b + ": " + pm12.size() +
+                            " candidates passed local smoothness filter." );
+                }
+                else
+                {
+                    Utils.log( pair.a + " > " + pair.b + ": found " + pm12.size() +
+                            " correspondences." );
+                }
+
                 for ( final PointMatch pm : pm12 )
                 {
                     final Vertex p1 = ( Vertex )pm.getP1();
@@ -556,6 +567,16 @@ public class ElasticLayerAlignment
                 initMeshes.fixTile( t2 );
             else
             {
+                if ( param.useLocalSmoothnessFilter )
+                {
+                    Utils.log( pair.a + " < " + pair.b + ": " + pm21.size() +
+                            " candidates passed local smoothness filter." );
+                }
+                else
+                {
+                    Utils.log( pair.a + " < " + pair.b + ": found " + pm21.size() +
+                            " correspondences." );
+                }
 
                 for ( final PointMatch pm : pm21 )
                 {

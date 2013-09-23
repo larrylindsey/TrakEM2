@@ -33,7 +33,7 @@ public class BlockMatchPairCallable implements
 
     public static class BlockMatchResults implements Serializable
     {
-        public final Collection<? extends Point> v1, v2;
+        public Collection<? extends Point> v1, v2;
         public final Collection<PointMatch> pm12, pm21;
         public final boolean layer1Fixed, layer2Fixed;
         public final Triple<Integer, Integer, AbstractModel<?>> pair;
@@ -94,6 +94,8 @@ public class BlockMatchPairCallable implements
         final ArrayList< PointMatch > pm21 = new ArrayList< PointMatch >();
         final Project project = layer1.getProject();
 
+        System.out.println("BMC rev 0: " + pair.a + " " + pair.b);
+
         final Image img1 = project.getLoader().getFlatAWTImage(
                 layer1,
                 box,
@@ -138,11 +140,6 @@ public class BlockMatchPairCallable implements
         mpicbg.trakem2.align.Util.imageToFloatAndMask( img1, ip1, ip1Mask );
         mpicbg.trakem2.align.Util.imageToFloatAndMask( img2, ip2, ip2Mask );
 
-
-
-//        if ( layer1Fixed )
-//            initMeshes.fixTile( t1 );
-//        else
         if (!layer1Fixed)
         {
 
@@ -172,52 +169,11 @@ public class BlockMatchPairCallable implements
 
             if ( param.useLocalSmoothnessFilter )
             {
-//                Utils.log( pair.a + " > " + pair.b + ": found " + pm12.size() + " correspondence candidates." );
                 localSmoothnessFilterModel.localSmoothnessFilter( pm12, pm12, localRegionSigma,
                         maxLocalEpsilon, param.maxLocalTrust );
-//                Utils.log( pair.a + " > " + pair.b + ": " + pm12.size() + " candidates passed local smoothness filter." );
             }
-//            else
-//            {
-//                Utils.log( pair.a + " > " + pair.b + ": found " + pm12.size() + " correspondences." );
-//            }
-
-            /* <visualisation> */
-            //			final List< Point > s1 = new ArrayList< Point >();
-            //			PointMatch.sourcePoints( pm12, s1 );
-            //			final ImagePlus imp1 = new ImagePlus( i + " >", ip1 );
-            //			imp1.show();
-            //			imp1.setOverlay( BlockMatching.illustrateMatches( pm12 ), Color.yellow, null );
-            //			imp1.setRoi( Util.pointsToPointRoi( s1 ) );
-            //			imp1.updateAndDraw();
-            /* </visualisation> */
-
-            //TODO: This part must be done locally.
-
-//            for ( final PointMatch pm : pm12 )
-//            {
-//                final Vertex p1 = ( Vertex )pm.getP1();
-//                final Vertex p2 = new Vertex( pm.getP2() );
-//                p1.addSpring( p2, new Spring( 0, springConstant ) );
-//                m2.addPassiveVertex( p2 );
-//            }
-//
-//            /*
-//            * adding Tiles to the initialing TileConfiguration, adding a Tile
-//            * multiple times does not harm because the TileConfiguration is
-//            * backed by a Set.
-//            */
-//            if ( pm12.size() > pair.c.getMinNumMatches() )
-//            {
-//                initMeshes.addTile( t1 );
-//                initMeshes.addTile( t2 );
-//                t1.connect( t2, pm12 );
-//            }
         }
 
-//        if ( layer2Fixed )
-//            initMeshes.fixTile( t2 );
-//        else
         if (!layer2Fixed)
         {
             BlockMatching.matchByMaximalPMCC(
@@ -245,46 +201,8 @@ public class BlockMatchPairCallable implements
 
             if ( param.useLocalSmoothnessFilter )
             {
-//                Utils.log( pair.a + " < " + pair.b + ": found " + pm21.size() + " correspondence candidates." );
                 localSmoothnessFilterModel.localSmoothnessFilter( pm21, pm21, localRegionSigma, maxLocalEpsilon, param.maxLocalTrust );
-//                Utils.log( pair.a + " < " + pair.b + ": " + pm21.size() + " candidates passed local smoothness filter." );
             }
-//            else
-//            {
-//                Utils.log( pair.a + " < " + pair.b + ": found " + pm21.size() + " correspondences." );
-//            }
-
-            /* <visualisation> */
-            //			final List< Point > s2 = new ArrayList< Point >();
-            //			PointMatch.sourcePoints( pm21, s2 );
-            //			final ImagePlus imp2 = new ImagePlus( i + " <", ip2 );
-            //			imp2.show();
-            //			imp2.setOverlay( BlockMatching.illustrateMatches( pm21 ), Color.yellow, null );
-            //			imp2.setRoi( Util.pointsToPointRoi( s2 ) );
-            //			imp2.updateAndDraw();
-            /* </visualisation> */
-
-            //TODO: this must be done locally.
-
-//            for ( final PointMatch pm : pm21 )
-//            {
-//                final Vertex p1 = ( Vertex )pm.getP1();
-//                final Vertex p2 = new Vertex( pm.getP2() );
-//                p1.addSpring( p2, new Spring( 0, springConstant ) );
-//                m1.addPassiveVertex( p2 );
-//            }
-//
-//            /*
-//            * adding Tiles to the initialing TileConfiguration, adding a Tile
-//            * multiple times does not harm because the TileConfiguration is
-//            * backed by a Set.
-//            */
-//            if ( pm21.size() > pair.c.getMinNumMatches() )
-//            {
-//                initMeshes.addTile( t1 );
-//                initMeshes.addTile( t2 );
-//                t2.connect( t1, pm21 );
-//            }
         }
 
 //        Utils.log( pair.a + " <> " + pair.b + " spring constant = " + springConstant );
