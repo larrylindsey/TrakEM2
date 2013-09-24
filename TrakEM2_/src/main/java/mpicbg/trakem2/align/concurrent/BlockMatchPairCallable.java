@@ -67,7 +67,7 @@ public class BlockMatchPairCallable implements
 
     private File projectFile = null;
     private double z1, z2;
-    private volatile Layer layer1, layer2;
+    private transient Layer layer1, layer2;
     private final boolean layer1Fixed, layer2Fixed;
     private final Filter<Patch> filter;
     private final ElasticLayerAlignment.Param param;
@@ -227,11 +227,14 @@ public class BlockMatchPairCallable implements
     private void readObject(ObjectInputStream ois) throws ClassNotFoundException, IOException
     {
         final Project p;
+        ois.defaultReadObject();
         if (lastProject == null || lastFile == null ||
                 !lastFile.getAbsolutePath().equals(projectFile.getAbsolutePath()))
         {
             ControlWindow.setGUIEnabled(false);
             p = Project.openFSProject(projectFile.getAbsolutePath(), false);
+            lastProject = p;
+            lastFile = projectFile;
         }
         else
         {
@@ -247,6 +250,7 @@ public class BlockMatchPairCallable implements
     {
         FSLoader loader = (FSLoader)layer1.getProject().getLoader();
         projectFile = new File(loader.getProjectXMLPath());
+        aOutputStream.defaultWriteObject();
     }
 
 

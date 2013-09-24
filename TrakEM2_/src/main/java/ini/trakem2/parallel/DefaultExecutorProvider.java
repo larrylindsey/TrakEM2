@@ -13,13 +13,14 @@ public class DefaultExecutorProvider extends ExecutorProvider
 
     public ExecutorService getService(int nThreads)
     {
-        return Executors.newFixedThreadPool(nThreads);
+        int nCpu = Runtime.getRuntime().availableProcessors();
+        int poolSize = nCpu / nThreads;
+        return Executors.newFixedThreadPool(poolSize < 1 ? 1 : poolSize);
     }
 
     public ExecutorService getService(float fractionThreads)
     {
-        int nc = (int)(fractionThreads *
-                (float)Runtime.getRuntime().availableProcessors());
-        return Executors.newFixedThreadPool(nc > 0 ? nc : 1);
+        int nThreads = (int)(fractionThreads * (float)Runtime.getRuntime().availableProcessors());
+        return getService(nThreads);
     }
 }

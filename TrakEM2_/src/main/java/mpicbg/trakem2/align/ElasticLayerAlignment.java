@@ -25,6 +25,7 @@ import ini.trakem2.Project;
 import ini.trakem2.display.Layer;
 import ini.trakem2.display.LayerSet;
 import ini.trakem2.display.Patch;
+import ini.trakem2.parallel.ExecutorProvider;
 import ini.trakem2.utils.Filter;
 import ini.trakem2.utils.Utils;
 
@@ -395,8 +396,7 @@ public class ElasticLayerAlignment
 			final boolean propagateTransformAfter,
 			final Filter< Patch > filter ) throws Exception
 	{
-        ExecutorService service =
-                Executors.newFixedThreadPool(1);
+        ExecutorService service = ExecutorProvider.getExecutorService(1.0f);
 		
 		
 		/* create tiles and models for all layers */
