@@ -44,11 +44,21 @@ public abstract class AbstractTreeTransferHandler implements DragGestureListener
         private DragGestureRecognizer dgr;
  
         protected AbstractTreeTransferHandler(DNDTree tree, int action, boolean drawIcon) {
-                this.tree = tree;
-                drawImage = drawIcon;
+            this.tree = tree;
+            drawImage = drawIcon;
+
+            if (!GraphicsEnvironment.getLocalGraphicsEnvironment().isHeadlessInstance())
+            {
                 dragSource = new DragSource();
                 dgr = dragSource.createDefaultDragGestureRecognizer(tree, action, this);
                 dropTarget = new DropTarget(tree, action, this);
+            }
+            else
+            {
+                dragSource = null;
+                dgr = null;
+                dropTarget = null;
+            }
         }
 
         protected void destroy() {
