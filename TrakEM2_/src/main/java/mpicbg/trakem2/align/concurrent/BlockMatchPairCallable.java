@@ -65,9 +65,9 @@ public class BlockMatchPairCallable implements
         }
     }
 
-    private File projectFile = null;
-    private double z1, z2;
-    private transient Layer layer1, layer2;
+//    private File projectFile = null;
+//    private double z1, z2;
+    private Layer layer1, layer2;
     private final boolean layer1Fixed, layer2Fixed;
     private final Filter<Patch> filter;
     private final ElasticLayerAlignment.Param param;
@@ -96,8 +96,8 @@ public class BlockMatchPairCallable implements
         v1 = sourcePoints1;
         v2 = sourcePoints2;
         this.box = box;
-        z1 = layer1.getZ();
-        z2 = layer2.getZ();
+//        z1 = layer1.getZ();
+//        z2 = layer2.getZ();
     }
 
     @Override
@@ -223,36 +223,5 @@ public class BlockMatchPairCallable implements
 
         return new BlockMatchResults(v1, v2, pm12, pm21, layer1Fixed, layer2Fixed, pair);
     }
-
-    private void readObject(ObjectInputStream ois) throws ClassNotFoundException, IOException
-    {
-        final Project p;
-        ois.defaultReadObject();
-        if (lastProject == null || lastFile == null ||
-                !lastFile.getAbsolutePath().equals(projectFile.getAbsolutePath()))
-        {
-            ControlWindow.setGUIEnabled(false);
-            p = Project.openFSProject(projectFile.getAbsolutePath(), false);
-            lastProject = p;
-            lastFile = projectFile;
-        }
-        else
-        {
-            p = lastProject;
-        }
-
-        layer1 = p.getRootLayerSet().getLayer(z1);
-        layer2 = p.getRootLayerSet().getLayer(z2);
-
-    }
-
-    private void writeObject(ObjectOutputStream aOutputStream) throws IOException
-    {
-        FSLoader loader = (FSLoader)layer1.getProject().getLoader();
-        projectFile = new File(loader.getProjectXMLPath());
-        aOutputStream.defaultWriteObject();
-    }
-
-
 
 }
