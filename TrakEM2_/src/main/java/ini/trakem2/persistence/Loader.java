@@ -4902,7 +4902,7 @@ while (it.hasNext()) {
 
 
 	/** Does nothing and returns null unless overriden. */
-	public Bureaucrat regenerateMipMaps(final Collection<? extends Displayable> patches) { return null; }
+	public void regenerateMipMaps(final Collection<? extends Displayable> patches) {  }
 
 	/** Read out the width,height of an image using LOCI BioFormats. */
 	static public Dimension getDimensions(final String path) {

@@ -50,6 +50,7 @@ import ini.trakem2.imaging.P;
 import ini.trakem2.io.ImageSaver;
 import ini.trakem2.io.RagMipMaps;
 import ini.trakem2.io.RawMipMaps;
+import ini.trakem2.parallel.ExecutorProvider;
 import ini.trakem2.utils.Bureaucrat;
 import ini.trakem2.utils.CachingThread;
 import ini.trakem2.utils.IJError;
@@ -69,6 +70,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FilenameFilter;
 import java.io.InputStream;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -102,6 +104,315 @@ import org.xml.sax.InputSource;
 
 /** A class to rely on memory only; except images which are rolled from a folder or their original location and flushed when memory is needed for more. Ideally there would be a given folder for storing items temporarily of permanently as the "project folder", but I haven't implemented it. */
 public final class FSLoader extends Loader {
+
+    private static class CannotRegenerateMipMapException extends Exception
+    {
+        public CannotRegenerateMipMapException(String message)
+        {
+            super(message);
+        }
+    }
+
+    private static class CannotSaveMipMapException extends Exception
+    {
+        public CannotSaveMipMapException(String message)
+        {
+            super(message);
+        }
+    }
+
+    private static class MipMapCallable implements Callable<Boolean>, Serializable
+    {
+
+        final Patch patch;
+        final RWImage mmio;
+        final String mExt, dir_mipmaps;
+
+        public MipMapCallable(final Patch patch, final RWImage mmio,
+                              final String dir_mipmaps, final String mExt)
+        {
+            IJ.log("Created MipMapCallable for patch " + patch);
+            this.patch = patch;
+            this.mmio = mmio;
+            this.mExt = mExt;
+            this.dir_mipmaps = dir_mipmaps;
+        }
+
+        @Override
+        public Boolean call() throws Exception
+        {
+            Utils.log("Called MipMapCallable for " + patch);
+            final int resizing_mode = patch.getProject().getMipMapsMode();
+            String errorMsg = "";
+            boolean badRegenerate = false;
+            ImageProcessor ip;
+            ByteProcessor alpha_mask = null;
+            ByteProcessor outside_mask = null;
+            int type = patch.getType();
+            FSLoader loader = (FSLoader)patch.getProject().getLoader();
+
+
+            // Aggressive cache freeing
+            loader.releaseToFit(patch.getOWidth() * patch.getOHeight() * 4 + MIN_FREE_BYTES);
+
+            // Obtain an image which may be coordinate-transformed, and an alpha mask.
+            Patch.PatchImage pai = patch.createTransformedImage();
+            if (null == pai || null == pai.target) {
+                //Utils.log("Can't regenerate mipmaps for patch " + patch);
+                System.out.println("Can't regenerate mipmaps for patch " + patch);
+                throw new CannotRegenerateMipMapException("Can't regenerate mipmaps for patch " +
+                        patch);
+//                cannot_regenerate.add(patch);
+//                return false;
+            }
+            ip = pai.target;
+            alpha_mask = pai.mask; // can be null
+            outside_mask = pai.outside; // can be null
+            pai = null;
+
+            // Old style:
+            //final String filename = new StringBuilder(new File(path).getName()).append('.').append(patch.getId()).append(mExt).toString();
+            // New style:
+            final String filename = createMipMapRelPath(patch, mExt);
+
+            int w = ip.getWidth();
+            int h = ip.getHeight();
+
+            // sigma = sqrt(2^level - 0.5^2)
+            //    where 0.5 is the estimated sigma for a full-scale image
+            //  which means sigma = 0.75 for the full-scale image (has level 0)
+            // prepare a 0.75 sigma image from the original
+
+            double min = patch.getMin(),
+                    max = patch.getMax();
+            // Fix improper min,max values
+            // (The -1,-1 are flags really for "not set")
+            if (-1 == min && -1 == max) {
+                switch (type) {
+                    case ImagePlus.COLOR_RGB:
+                    case ImagePlus.COLOR_256:
+                    case ImagePlus.GRAY8:
+                        patch.setMinAndMax(0, 255);
+                        break;
+                    // Find and flow through to default:
+                    case ImagePlus.GRAY16:
+                        ((ij.process.ShortProcessor)ip).findMinAndMax();
+                        patch.setMinAndMax(ip.getMin(), ip.getMax());
+                        break;
+                    case ImagePlus.GRAY32:
+                        ((FloatProcessor)ip).findMinAndMax();
+                        patch.setMinAndMax(ip.getMin(), ip.getMax());
+                        break;
+                }
+                min = patch.getMin(); // may have changed
+                max = patch.getMax();
+            }
+
+            // Set for the level 0 image, which is a duplicate of the one in the cache in any case
+            ip.setMinAndMax(min, max);
+
+
+            // ImageJ no longer stretches the bytes for ByteProcessor with setMinAndmax
+            if (ByteProcessor.class == ip.getClass()) {
+                if (0 != min && 255 != max) {
+                    final byte[] b = (byte[]) ip.getPixels();
+                    final double scale = 255 / (max - min);
+                    for (int i=0; i<b.length; ++i) {
+                        final int val = b[i] & 0xff;
+                        if (val < min) b[i] = 0;
+                        else b[i] = (byte)Math.min(255, ((val - min) * scale));
+                    }
+                }
+            }
+
+            // Proper support for LUT images: treat them as RGB
+            if (ip.isColorLut() || type == ImagePlus.COLOR_256) {
+                ip = ip.convertToRGB();
+                type = ImagePlus.COLOR_RGB;
+            }
+
+            if (Loader.AREA_DOWNSAMPLING == resizing_mode) {
+                long t0 = System.currentTimeMillis();
+                final ImageBytes[] b = DownsamplerMipMaps.create(patch, type, ip, alpha_mask, outside_mask);
+                long t1 = System.currentTimeMillis();
+                for (int i=0; i<b.length; ++i) {
+                    mmio.save(loader.getLevelDir(dir_mipmaps, i) + filename, b[i].c, b[i].width, b[i].height, 0.85f);
+                }
+                long t2 = System.currentTimeMillis();
+                System.out.println("MipMaps with area downsampling: creation took " + (t1 - t0) + "ms, saving took " + (t2 - t1) + "ms, total: " + (t2 - t0) + "ms\n");
+            } else if (Loader.GAUSSIAN == resizing_mode) {
+                if (ImagePlus.COLOR_RGB == type) {
+                    // TODO releaseToFit proper
+                    loader.releaseToFit(w * h * 4 * 10);
+                    final ColorProcessor cp = (ColorProcessor)ip;
+                    final FloatProcessorT2 red = new FloatProcessorT2(w, h, 0, 255);   cp.toFloat(0, red);
+                    final FloatProcessorT2 green = new FloatProcessorT2(w, h, 0, 255); cp.toFloat(1, green);
+                    final FloatProcessorT2 blue = new FloatProcessorT2(w, h, 0, 255);  cp.toFloat(2, blue);
+                    FloatProcessorT2 alpha;
+                    final FloatProcessorT2 outside;
+                    if (null != alpha_mask) {
+                        alpha = new FloatProcessorT2(alpha_mask);
+                    } else {
+                        alpha = null;
+                    }
+                    if (null != outside_mask) {
+                        outside = new FloatProcessorT2(outside_mask);
+                        if ( null == alpha ) {
+                            alpha = outside;
+                            alpha_mask = outside_mask;
+                        }
+                    } else {
+                        outside = null;
+                    }
+
+                    final String target_dir0 = loader.getLevelDir(dir_mipmaps, 0);
+
+                    if (Thread.currentThread().isInterrupted()) return false;
+
+                    // Generate level 0 first:
+                    // TODO Add alpha information into the int[] pixel array or make the image visible some other way
+                    if (!(null == alpha ? mmio.save(cp, target_dir0 + filename, 0.85f, false)
+                            : mmio.save(target_dir0 + filename, P.asRGBABytes((int[])cp.getPixels(), (byte[])alpha_mask.getPixels(), null == outside ? null : (byte[])outside_mask.getPixels()), w, h, 0.85f))) {
+                        errorMsg = "Failed to save mipmap for COLOR_RGB, 'alpha = " + alpha + "', level = 0  for  patch " + patch;
+                        badRegenerate = true;
+                    } else {
+                        int k = 0; // the scale level. Proper scale is: 1 / pow(2, k)
+                        do {
+                            if (Thread.currentThread().isInterrupted()) return false;
+                            // 1 - Prepare values for the next scaled image
+                            k++;
+                            // 2 - Check that the target folder for the desired scale exists
+                            final String target_dir = loader.getLevelDir(dir_mipmaps, k);
+                            if (null == target_dir) continue;
+                            // 3 - Blur the previous image to 0.75 sigma, and scale it
+                            final byte[] r = gaussianBlurResizeInHalf(red);   // will resize 'red' FloatProcessor in place.
+                            final byte[] g = gaussianBlurResizeInHalf(green); // idem
+                            final byte[] b = gaussianBlurResizeInHalf(blue);  // idem
+                            final byte[] a = null == alpha ? null : gaussianBlurResizeInHalf(alpha); // idem
+                            if ( null != outside ) {
+                                final byte[] o;
+                                if (alpha != outside)
+                                    o = gaussianBlurResizeInHalf(outside); // idem
+                                else
+                                    o = a;
+                                // Remove all not completely inside pixels from the alphamask
+                                // If there was no alpha mask, alpha is the outside itself
+                                for (int i=0; i<o.length; i++) {
+                                    if ( (o[i]&0xff) != 255 ) a[i] = 0; // TODO I am sure there is a bitwise operation to do this in one step. Some thing like: a[i] &= 127;
+                                }
+                            }
+
+                            w = red.getWidth();
+                            h = red.getHeight();
+
+                            // 4 - Compose ColorProcessor
+                            if (null == alpha) {
+                                // 5 - Save as jpeg
+                                if (!mmio.save(target_dir + filename, new byte[][]{r, g, b}, w, h, 0.85f)) {
+                                    errorMsg = "Failed to save mipmap for COLOR_RGB, 'alpha = " + alpha + "', level = " + k  + " for  patch " + patch;
+                                    badRegenerate = true;
+                                    break;
+                                }
+                            } else {
+                                if (!mmio.save(target_dir + filename, new byte[][]{r, g, b, a}, w, h, 0.85f)) {
+                                    errorMsg = "Failed to save mipmap for COLOR_RGB, 'alpha = " + alpha + "', level = " + k  + " for  patch " + patch;
+                                    badRegenerate = true;
+                                    break;
+                                }
+                            }
+                        } while (w >= 32 && h >= 32); // not smaller than 32x32
+                    }
+                } else {
+                    long t0 = System.currentTimeMillis();
+                    // Greyscale:
+                    loader.releaseToFit(w * h * 4 * 10);
+
+                    if (Thread.currentThread().isInterrupted()) return false;
+
+                    final FloatProcessorT2 fp = new FloatProcessorT2((FloatProcessor) ip.convertToFloat());
+                    if (ImagePlus.GRAY8 == type) {
+                        // for 8-bit, the min,max has been applied when going to FloatProcessor
+                        fp.setMinMax(0, 255); // just set it
+                    } else {
+                        fp.setMinAndMax(patch.getMin(), patch.getMax());
+                    }
+                    //fp.debugMinMax(patch.toString());
+
+                    FloatProcessorT2 alpha, outside;
+                    if (null != alpha_mask) {
+                        alpha = new FloatProcessorT2(alpha_mask);
+                    } else {
+                        alpha = null;
+                    }
+                    if (null != outside_mask) {
+                        outside = new FloatProcessorT2(outside_mask);
+                        if (null == alpha) {
+                            alpha = outside;
+                            alpha_mask = outside_mask;
+                        }
+                    } else {
+                        outside = null;
+                    }
+
+                    int k = 0; // the scale level. Proper scale is: 1 / pow(2, k)
+                    do {
+                        if (Thread.currentThread().isInterrupted()) return false;
+
+                        if (0 != k) { // not doing so at the end because it would add one unnecessary blurring
+                            gaussianBlurResizeInHalf( fp );
+                            if (null != alpha) {
+                                gaussianBlurResizeInHalf( alpha );
+                                if (alpha != outside && outside != null) {
+                                    gaussianBlurResizeInHalf( outside );
+                                }
+                            }
+                        }
+
+                        w = fp.getWidth();
+                        h = fp.getHeight();
+
+                        // 1 - check that the target folder for the desired scale exists
+                        final String target_dir = loader.getLevelDir(dir_mipmaps, k);
+                        if (null == target_dir) continue;
+
+                        if (null != alpha) {
+                            // 3 - save as jpeg with alpha
+                            // Remove all not completely inside pixels from the alpha mask
+                            // If there was no alpha mask, alpha is the outside itself
+                            if (!mmio.save(target_dir + filename, new byte[][]{fp.getScaledBytePixels(), P.merge(alpha.getBytePixels(), null == outside ? null : outside.getBytePixels())}, w, h, 0.85f)) {
+                                errorMsg = "Failed to save mipmap for GRAY8, 'alpha = " + alpha + "', level = " + k  + " for  patch " + patch;
+                                badRegenerate = true;
+                                break;
+                            }
+                        } else {
+                            // 3 - save as 8-bit jpeg
+                            if (!mmio.save(target_dir + filename, new byte[][]{fp.getScaledBytePixels()}, w, h, 0.85f)) {
+                                errorMsg = "Failed to save mipmap for GRAY8, 'alpha = " + alpha + "', level = " + k  + " for  patch " + patch;
+                                badRegenerate = true;
+                                break;
+                            }
+                        }
+
+                        // 4 - prepare values for the next scaled image
+                        k++;
+                    } while (fp.getWidth() >= 32 && fp.getHeight() >= 32); // not smaller than 32x32
+
+                    long t1 = System.currentTimeMillis();
+                    System.out.println("MipMaps took " + (t1 - t0));
+                }
+            } else {
+                Utils.log("ERROR: unknown image resizing mode for mipmaps: " + resizing_mode);
+            }
+
+            if (badRegenerate)
+            {
+                System.out.println("Couldn't save mipmaps: " + errorMsg);
+                throw new CannotSaveMipMapException(errorMsg);
+            }
+
+            return true;
+        }
+    }
 
 	/* sigma of the Gaussian kernel sto be used for downsampling by a factor of 2 */
 	final private static double SIGMA_2 = Math.sqrt( 0.75 );
@@ -1410,8 +1721,8 @@ public final class FSLoader extends Loader {
 	}
 
 	/** Order the regeneration of all mipmaps for the Patch instances in @param patches, setting up a task that blocks input until all completed. */
-	public Bureaucrat regenerateMipMaps(final Collection<? extends Displayable> patches) {
-		return Bureaucrat.createAndStart(new Worker.Task("Regenerating mipmaps") { public void exec() {
+	public void regenerateMipMaps(final Collection<? extends Displayable> patches) {
+		Bureaucrat.createAndStart(new Worker.Task("Regenerating mipmaps") { public void exec() {
 			final List<Future<?>> fus = new ArrayList<Future<?>>();
 			for (final Displayable d : patches) {
 				if (d.getClass() != Patch.class) continue;
@@ -1565,264 +1876,29 @@ public final class FSLoader extends Loader {
 		/** Alpha mask: setup to check if it was modified while regenerating. */
 		final long alpha_mask_id = patch.getAlphaMaskId();
 
-		final int resizing_mode = patch.getProject().getMipMapsMode();
-
 		try {
-			ImageProcessor ip;
-			ByteProcessor alpha_mask = null;
-			ByteProcessor outside_mask = null;
-			int type = patch.getType();
+            ExecutorService service = ExecutorProvider.getExecutorService(1.0f);
+            MipMapCallable mmc = new MipMapCallable(patch, mmio, dir_mipmaps, mExt);
+            try
+            {
+			    Future<Boolean> future = service.submit(mmc);
+                return future.get();
+            }
+            catch (ExecutionException ee)
+            {
+                if (ee.getCause() instanceof CannotSaveMipMapException)
+                {
+                    Utils.log(ee.getCause().getMessage());
+                    cannot_regenerate.add(patch);
+                    return true;
+                }
+                else
+                {
+                    throw ee;
+                }
+            }
 
-			// Aggressive cache freeing
-			releaseToFit(patch.getOWidth() * patch.getOHeight() * 4 + MIN_FREE_BYTES);
-
-			// Obtain an image which may be coordinate-transformed, and an alpha mask.
-			Patch.PatchImage pai = patch.createTransformedImage();
-			if (null == pai || null == pai.target) {
-				Utils.log("Can't regenerate mipmaps for patch " + patch);
-				cannot_regenerate.add(patch);
-				return false;
-			}
-			ip = pai.target;
-			alpha_mask = pai.mask; // can be null
-			outside_mask = pai.outside; // can be null
-			pai = null;
-			
-			// Old style:
-			//final String filename = new StringBuilder(new File(path).getName()).append('.').append(patch.getId()).append(mExt).toString();
-			// New style:
-			final String filename = createMipMapRelPath(patch, mExt);
-
-			int w = ip.getWidth();
-			int h = ip.getHeight();
-
-			// sigma = sqrt(2^level - 0.5^2)
-			//    where 0.5 is the estimated sigma for a full-scale image
-			//  which means sigma = 0.75 for the full-scale image (has level 0)
-			// prepare a 0.75 sigma image from the original
-
-			double min = patch.getMin(),
-			       max = patch.getMax();
-			// Fix improper min,max values
-			// (The -1,-1 are flags really for "not set")
-			if (-1 == min && -1 == max) {
-				switch (type) {
-					case ImagePlus.COLOR_RGB:
-					case ImagePlus.COLOR_256:
-					case ImagePlus.GRAY8:
-						patch.setMinAndMax(0, 255);
-						break;
-					// Find and flow through to default:
-					case ImagePlus.GRAY16:
-						((ij.process.ShortProcessor)ip).findMinAndMax();
-						patch.setMinAndMax(ip.getMin(), ip.getMax());
-						break;
-					case ImagePlus.GRAY32:
-						((FloatProcessor)ip).findMinAndMax();
-						patch.setMinAndMax(ip.getMin(), ip.getMax());
-						break;
-				}
-				min = patch.getMin(); // may have changed
-				max = patch.getMax();
-			}
-			
-			// Set for the level 0 image, which is a duplicate of the one in the cache in any case
-			ip.setMinAndMax(min, max);
-
-
-			// ImageJ no longer stretches the bytes for ByteProcessor with setMinAndmax
-			if (ByteProcessor.class == ip.getClass()) {
-				if (0 != min && 255 != max) {
-					final byte[] b = (byte[]) ip.getPixels();
-					final double scale = 255 / (max - min);
-					for (int i=0; i<b.length; ++i) {
-						final int val = b[i] & 0xff;
-						if (val < min) b[i] = 0;
-						else b[i] = (byte)Math.min(255, ((val - min) * scale));
-					}
-				}
-			}
-
-			// Proper support for LUT images: treat them as RGB
-			if (ip.isColorLut() || type == ImagePlus.COLOR_256) {
-				ip = ip.convertToRGB();
-				type = ImagePlus.COLOR_RGB;
-			}
-			
-			if (Loader.AREA_DOWNSAMPLING == resizing_mode) {
-				long t0 = System.currentTimeMillis();
-				final ImageBytes[] b = DownsamplerMipMaps.create(patch, type, ip, alpha_mask, outside_mask);
-				long t1 = System.currentTimeMillis();
-				for (int i=0; i<b.length; ++i) {
-					mmio.save(getLevelDir(dir_mipmaps, i) + filename, b[i].c, b[i].width, b[i].height, 0.85f);
-				}
-				long t2 = System.currentTimeMillis();
-				System.out.println("MipMaps with area downsampling: creation took " + (t1 - t0) + "ms, saving took " + (t2 - t1) + "ms, total: " + (t2 - t0) + "ms\n");
-			} else if (Loader.GAUSSIAN == resizing_mode) {
-				if (ImagePlus.COLOR_RGB == type) {
-					// TODO releaseToFit proper
-					releaseToFit(w * h * 4 * 10);
-					final ColorProcessor cp = (ColorProcessor)ip;
-					final FloatProcessorT2 red = new FloatProcessorT2(w, h, 0, 255);   cp.toFloat(0, red);
-					final FloatProcessorT2 green = new FloatProcessorT2(w, h, 0, 255); cp.toFloat(1, green);
-					final FloatProcessorT2 blue = new FloatProcessorT2(w, h, 0, 255);  cp.toFloat(2, blue);
-					FloatProcessorT2 alpha;
-					final FloatProcessorT2 outside;
-					if (null != alpha_mask) {
-						alpha = new FloatProcessorT2(alpha_mask);
-					} else {
-						alpha = null;
-					}
-					if (null != outside_mask) {
-						outside = new FloatProcessorT2(outside_mask);
-						if ( null == alpha ) {
-							alpha = outside;
-							alpha_mask = outside_mask;
-						}
-					} else {
-						outside = null;
-					}
-
-					final String target_dir0 = getLevelDir(dir_mipmaps, 0);
-
-					if (Thread.currentThread().isInterrupted()) return false;
-
-					// Generate level 0 first:
-					// TODO Add alpha information into the int[] pixel array or make the image visible some other way
-					if (!(null == alpha ? mmio.save(cp, target_dir0 + filename, 0.85f, false)
-							: mmio.save(target_dir0 + filename, P.asRGBABytes((int[])cp.getPixels(), (byte[])alpha_mask.getPixels(), null == outside ? null : (byte[])outside_mask.getPixels()), w, h, 0.85f))) {
-						Utils.log("Failed to save mipmap for COLOR_RGB, 'alpha = " + alpha + "', level = 0  for  patch " + patch);
-						cannot_regenerate.add(patch);
-					} else {
-						int k = 0; // the scale level. Proper scale is: 1 / pow(2, k)
-						do {
-							if (Thread.currentThread().isInterrupted()) return false;
-							// 1 - Prepare values for the next scaled image
-							k++;
-							// 2 - Check that the target folder for the desired scale exists
-							final String target_dir = getLevelDir(dir_mipmaps, k);
-							if (null == target_dir) continue;
-							// 3 - Blur the previous image to 0.75 sigma, and scale it
-							final byte[] r = gaussianBlurResizeInHalf(red);   // will resize 'red' FloatProcessor in place.
-							final byte[] g = gaussianBlurResizeInHalf(green); // idem
-							final byte[] b = gaussianBlurResizeInHalf(blue);  // idem
-							final byte[] a = null == alpha ? null : gaussianBlurResizeInHalf(alpha); // idem
-							if ( null != outside ) {
-								final byte[] o;
-								if (alpha != outside)
-									o = gaussianBlurResizeInHalf(outside); // idem
-								else
-									o = a;
-								// Remove all not completely inside pixels from the alphamask
-								// If there was no alpha mask, alpha is the outside itself
-								for (int i=0; i<o.length; i++) {
-									if ( (o[i]&0xff) != 255 ) a[i] = 0; // TODO I am sure there is a bitwise operation to do this in one step. Some thing like: a[i] &= 127;
-								}
-							}
-
-							w = red.getWidth();
-							h = red.getHeight();
-
-							// 4 - Compose ColorProcessor
-							if (null == alpha) {
-								// 5 - Save as jpeg
-								if (!mmio.save(target_dir + filename, new byte[][]{r, g, b}, w, h, 0.85f)) {
-									Utils.log("Failed to save mipmap for COLOR_RGB, 'alpha = " + alpha + "', level = " + k  + " for  patch " + patch);
-									cannot_regenerate.add(patch);
-									break;
-								}
-							} else {
-								if (!mmio.save(target_dir + filename, new byte[][]{r, g, b, a}, w, h, 0.85f)) {
-									Utils.log("Failed to save mipmap for COLOR_RGB, 'alpha = " + alpha + "', level = " + k  + " for  patch " + patch);
-									cannot_regenerate.add(patch);
-									break;
-								}
-							}
-						} while (w >= 32 && h >= 32); // not smaller than 32x32
-					}
-				} else {
-					long t0 = System.currentTimeMillis();
-					// Greyscale:
-					releaseToFit(w * h * 4 * 10);
-
-					if (Thread.currentThread().isInterrupted()) return false;
-
-					final FloatProcessorT2 fp = new FloatProcessorT2((FloatProcessor) ip.convertToFloat());
-					if (ImagePlus.GRAY8 == type) {
-						// for 8-bit, the min,max has been applied when going to FloatProcessor
-						fp.setMinMax(0, 255); // just set it
-					} else {
-						fp.setMinAndMax(patch.getMin(), patch.getMax());
-					}
-					//fp.debugMinMax(patch.toString());
-
-					FloatProcessorT2 alpha, outside;
-					if (null != alpha_mask) {
-						alpha = new FloatProcessorT2(alpha_mask);
-					} else {
-						alpha = null;
-					}
-					if (null != outside_mask) {
-						outside = new FloatProcessorT2(outside_mask);
-						if (null == alpha) {
-							alpha = outside;
-							alpha_mask = outside_mask;
-						}
-					} else {
-						outside = null;
-					}
-
-					int k = 0; // the scale level. Proper scale is: 1 / pow(2, k)
-					do {
-						if (Thread.currentThread().isInterrupted()) return false;
-
-						if (0 != k) { // not doing so at the end because it would add one unnecessary blurring
-							gaussianBlurResizeInHalf( fp );
-							if (null != alpha) {
-								gaussianBlurResizeInHalf( alpha );
-								if (alpha != outside && outside != null) {
-									gaussianBlurResizeInHalf( outside );
-								}
-							}
-						}
-
-						w = fp.getWidth();
-						h = fp.getHeight();
-
-						// 1 - check that the target folder for the desired scale exists
-						final String target_dir = getLevelDir(dir_mipmaps, k);
-						if (null == target_dir) continue;
-
-						if (null != alpha) {
-							// 3 - save as jpeg with alpha
-							// Remove all not completely inside pixels from the alpha mask
-							// If there was no alpha mask, alpha is the outside itself
-							if (!mmio.save(target_dir + filename, new byte[][]{fp.getScaledBytePixels(), P.merge(alpha.getBytePixels(), null == outside ? null : outside.getBytePixels())}, w, h, 0.85f)) {
-								Utils.log("Failed to save mipmap for GRAY8, 'alpha = " + alpha + "', level = " + k  + " for  patch " + patch);
-								cannot_regenerate.add(patch);
-								break;
-							}
-						} else {
-							// 3 - save as 8-bit jpeg
-							if (!mmio.save(target_dir + filename, new byte[][]{fp.getScaledBytePixels()}, w, h, 0.85f)) {
-								Utils.log("Failed to save mipmap for GRAY8, 'alpha = " + alpha + "', level = " + k  + " for  patch " + patch);
-								cannot_regenerate.add(patch);
-								break;
-							}
-						}
-
-						// 4 - prepare values for the next scaled image
-						k++;
-					} while (fp.getWidth() >= 32 && fp.getHeight() >= 32); // not smaller than 32x32
-
-					long t1 = System.currentTimeMillis();
-					System.out.println("MipMaps took " + (t1 - t0));
-				}
-			} else {
-				Utils.log("ERROR: unknown image resizing mode for mipmaps: " + resizing_mode);
-			}
-
-			return true;
+			//return true;
 		} catch (Throwable e) {
 			Utils.log("*** ERROR: Can't generate mipmaps for patch " + patch);
 			IJError.print(e);
@@ -1962,7 +2038,7 @@ public final class FSLoader extends Loader {
 
 	/** Generate image pyramids and store them into files under the dir_mipmaps for each Patch object in the Project. The method is multithreaded, using as many processors as available to the JVM.
 	 *
-	 * @param al : the list of Patch instances to generate mipmaps for.
+	 * @param patches : the list of Patch instances to generate mipmaps for.
 	 * @param overwrite : whether to overwrite any existing mipmaps, or save only those that don't exist yet for whatever reason. This flag provides the means for minimal effort mipmap regeneration.)
 	 * */
 	public Bureaucrat generateMipMaps(final Collection<Displayable> patches, final boolean overwrite) {
@@ -2431,14 +2507,14 @@ public final class FSLoader extends Loader {
 				//Utils.log2("calling removeMipMaps from regenerateMipMaps");
 				final Future<Boolean> removing = removeMipMaps(patch);
 
-				fu = regenerator.submit(new Callable<Boolean>() {
+				fu = Executors.newSingleThreadExecutor().submit(new Callable<Boolean>() {
 					public Boolean call() {
 						boolean b = false;
 						try {
 							// synchronize with the removal:
 							if (null != removing) removing.get();
+                            b = generateMipMaps(patch); // will remove the Future from the regenerating_mipmaps table, under proper gm_lock synchronization
 							Utils.showStatus(new StringBuilder("Regenerating mipmaps (").append(n_regenerating.get()).append(" to go)").toString());
-							b = generateMipMaps(patch); // will remove the Future from the regenerating_mipmaps table, under proper gm_lock synchronization
 							Display.repaint(patch.getLayer());
 							Display.updatePanel(patch.getLayer(), patch);
 							Utils.showStatus("");
@@ -2878,7 +2954,7 @@ public final class FSLoader extends Loader {
 		}, project);
 	}
 
-	private abstract class RWImage {
+	private static abstract class RWImage  implements Serializable{
 		boolean save(ImageProcessor ip, final String path, final float quality, final boolean as_grey) {
 			if (as_grey) ip = ip.convertToByte(false);
 			if (ip instanceof ByteProcessor) {
@@ -2915,7 +2991,7 @@ public final class FSLoader extends Loader {
 		/** Opens grey images or, if not grey, converts them to grey. */
 		abstract BufferedImage openGrey(String path);
 	}
-	private final class RWImageJPG extends RWImage {
+	private static final class RWImageJPG extends RWImage {
 		@Override
 		final boolean save(final ImageProcessor ip, final String path, final float quality, final boolean as_grey) {
 			return ImageSaver.saveAsJpeg(ip, path, quality, as_grey);
@@ -2947,7 +3023,7 @@ public final class FSLoader extends Loader {
 			return false;
 		}
 	}
-	private final class RWImagePNG extends RWImage {
+	private static final class RWImagePNG extends RWImage {
 		@Override
 		final boolean save(final ImageProcessor ip, final String path, final float quality, final boolean as_grey) {
 			return ImageSaver.saveAsPNG(ip, path);
@@ -2991,7 +3067,7 @@ public final class FSLoader extends Loader {
 			return false;
 		}
 	}
-	private final class RWImageTIFF extends RWImage {
+	private static final class RWImageTIFF extends RWImage {
 		@Override
 		final boolean save(final ImageProcessor ip, final String path, final float quality, final boolean as_grey) {
 			return ImageSaver.saveAsTIFF(ip, path, as_grey);
@@ -3023,7 +3099,7 @@ public final class FSLoader extends Loader {
 			return false;
 		}
 	}
-	private final class RWImageRaw extends RWImage {
+	private static final class RWImageRaw extends RWImage {
 		@Override
 		final BufferedImage open(final String path) {
 			return RawMipMaps.read(path);
@@ -3041,7 +3117,7 @@ public final class FSLoader extends Loader {
 			}
 		}
 	}
-	private final class RWImageRag extends RWImage {
+	private static final class RWImageRag extends RWImage {
 		@Override
 		final BufferedImage open(final String path) {
 			return RagMipMaps.read(path);

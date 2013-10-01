@@ -1,5 +1,6 @@
 package ini.trakem2.parallel;
 
+import java.util.HashMap;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -9,6 +10,9 @@ public abstract class ExecutorProvider
 {
 
     private static ExecutorProvider provider = new DefaultExecutorProvider();
+
+    private static final HashMap<Float, ExecutorService> serviceCache =
+            new HashMap<Float, ExecutorService>();
 
     /**
      * Returns an ExecutorService for Callables that use nThreads number of threads.
@@ -20,7 +24,18 @@ public abstract class ExecutorProvider
      */
     public static ExecutorService getExecutorService(final int nThreads)
     {
-        return provider.getService(nThreads);
+        float key = -nThreads;
+        if (serviceCache.containsKey(key))
+        {
+            return serviceCache.get(key);
+        }
+        else
+        {
+            final ExecutorService service = provider.getService(nThreads);
+
+            serviceCache.put(key, service);
+            return service;
+        }
     }
 
     /**
@@ -34,11 +49,22 @@ public abstract class ExecutorProvider
 
     public static ExecutorService getExecutorService(final float fractionThreads)
     {
-        return provider.getService(fractionThreads);
+        if (serviceCache.containsKey(fractionThreads))
+        {
+            return serviceCache.get(fractionThreads);
+        }
+        else
+        {
+            final ExecutorService service = provider.getService(fractionThreads);
+
+            serviceCache.put(fractionThreads, service);
+            return service;
+        }
     }
 
     public static void setProvider(final ExecutorProvider ep)
     {
+        serviceCache.clear();
         provider = ep;
     }
 
