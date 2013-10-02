@@ -121,28 +121,39 @@ public final class FSLoader extends Loader {
         }
     }
 
-    private static class MipMapCallable implements Callable<Boolean>, Serializable
+    private static class MipMapCallable implements Callable<Integer>, Serializable
     {
 
         final Patch patch;
         final RWImage mmio;
-        final String mExt, dir_mipmaps;
+        final String mExt;
+        final File mipmapFile;
+        final String dir_mipmaps;
 
         public MipMapCallable(final Patch patch, final RWImage mmio,
                               final String dir_mipmaps, final String mExt)
         {
-            IJ.log("Created MipMapCallable for patch " + patch);
             this.patch = patch;
             this.mmio = mmio;
             this.mExt = mExt;
+            //Use a File to preserve Cluster compatibility
+            this.mipmapFile = new File(dir_mipmaps);
             this.dir_mipmaps = dir_mipmaps;
         }
 
-        @Override
-        public Boolean call() throws Exception
+        public String mipmapPath(int level)
         {
-            Utils.log("Called MipMapCallable for " + patch);
+            final FSLoader loader = (FSLoader)patch.getProject().getLoader();
+            final String filename = createMipMapRelPath(patch, mExt);
+            final String target_dir = loader.getLevelDir(mipmapFile.getPath(), level);
+            return target_dir + filename;
+        }
+
+        @Override
+        public Integer call() throws Exception
+        {
             final int resizing_mode = patch.getProject().getMipMapsMode();
+            String dir_mipmaps = mipmapFile.getAbsolutePath() + "/";
             String errorMsg = "";
             boolean badRegenerate = false;
             ImageProcessor ip;
@@ -150,7 +161,7 @@ public final class FSLoader extends Loader {
             ByteProcessor outside_mask = null;
             int type = patch.getType();
             FSLoader loader = (FSLoader)patch.getProject().getLoader();
-
+            int k = 0;
 
             // Aggressive cache freeing
             loader.releaseToFit(patch.getOWidth() * patch.getOHeight() * 4 + MIN_FREE_BYTES);
@@ -236,6 +247,7 @@ public final class FSLoader extends Loader {
                 final ImageBytes[] b = DownsamplerMipMaps.create(patch, type, ip, alpha_mask, outside_mask);
                 long t1 = System.currentTimeMillis();
                 for (int i=0; i<b.length; ++i) {
+                    k = i;
                     mmio.save(loader.getLevelDir(dir_mipmaps, i) + filename, b[i].c, b[i].width, b[i].height, 0.85f);
                 }
                 long t2 = System.currentTimeMillis();
@@ -267,7 +279,7 @@ public final class FSLoader extends Loader {
 
                     final String target_dir0 = loader.getLevelDir(dir_mipmaps, 0);
 
-                    if (Thread.currentThread().isInterrupted()) return false;
+                    if (Thread.currentThread().isInterrupted()) return -1;
 
                     // Generate level 0 first:
                     // TODO Add alpha information into the int[] pixel array or make the image visible some other way
@@ -276,9 +288,8 @@ public final class FSLoader extends Loader {
                         errorMsg = "Failed to save mipmap for COLOR_RGB, 'alpha = " + alpha + "', level = 0  for  patch " + patch;
                         badRegenerate = true;
                     } else {
-                        int k = 0; // the scale level. Proper scale is: 1 / pow(2, k)
                         do {
-                            if (Thread.currentThread().isInterrupted()) return false;
+                            if (Thread.currentThread().isInterrupted()) return -1;
                             // 1 - Prepare values for the next scaled image
                             k++;
                             // 2 - Check that the target folder for the desired scale exists
@@ -320,6 +331,10 @@ public final class FSLoader extends Loader {
                                     break;
                                 }
                             }
+
+                            System.out.println(new File(target_dir + filename).exists() ?
+                                    "File " + filename + " exists!" :
+                                    "File " + filename + " Does NOT exist");
                         } while (w >= 32 && h >= 32); // not smaller than 32x32
                     }
                 } else {
@@ -327,7 +342,7 @@ public final class FSLoader extends Loader {
                     // Greyscale:
                     loader.releaseToFit(w * h * 4 * 10);
 
-                    if (Thread.currentThread().isInterrupted()) return false;
+                    if (Thread.currentThread().isInterrupted()) return -1;
 
                     final FloatProcessorT2 fp = new FloatProcessorT2((FloatProcessor) ip.convertToFloat());
                     if (ImagePlus.GRAY8 == type) {
@@ -354,9 +369,8 @@ public final class FSLoader extends Loader {
                         outside = null;
                     }
 
-                    int k = 0; // the scale level. Proper scale is: 1 / pow(2, k)
                     do {
-                        if (Thread.currentThread().isInterrupted()) return false;
+                        if (Thread.currentThread().isInterrupted()) return -1;
 
                         if (0 != k) { // not doing so at the end because it would add one unnecessary blurring
                             gaussianBlurResizeInHalf( fp );
@@ -410,7 +424,7 @@ public final class FSLoader extends Loader {
                 throw new CannotSaveMipMapException(errorMsg);
             }
 
-            return true;
+            return k;
         }
     }
 
@@ -1881,15 +1895,17 @@ public final class FSLoader extends Loader {
             MipMapCallable mmc = new MipMapCallable(patch, mmio, dir_mipmaps, mExt);
             try
             {
-			    Future<Boolean> future = service.submit(mmc);
-                return future.get();
+			    Future<Integer> future = service.submit(mmc);
+                int level = future.get();
+                //return getCachedClosestBelowImage(patch, 1) != null && level >= 0;
+                return level >= 0;
             }
             catch (ExecutionException ee)
             {
+                cannot_regenerate.add(patch);
                 if (ee.getCause() instanceof CannotSaveMipMapException)
                 {
                     Utils.log(ee.getCause().getMessage());
-                    cannot_regenerate.add(patch);
                     return true;
                 }
                 else
@@ -2413,6 +2429,7 @@ public final class FSLoader extends Loader {
 				// TODO should wait if the file is currently being generated
 
 				final MipMapImage mipMap = fetchMipMap(patch, level, n_bytes);
+
 				if (null != mipMap) return mipMap;
 
 				// if we got so far ... try to regenerate the mipmaps
@@ -2503,16 +2520,11 @@ public final class FSLoader extends Loader {
 				Utils.log2("SUBMITTING to regen " + patch);
 				Utils.showStatus(new StringBuilder("Regenerating mipmaps (").append(n_regenerating.get()).append(" to go)").toString());
 
-				// Eliminate existing mipmaps, if any, in a separate thread:
-				//Utils.log2("calling removeMipMaps from regenerateMipMaps");
-				final Future<Boolean> removing = removeMipMaps(patch);
 
 				fu = Executors.newSingleThreadExecutor().submit(new Callable<Boolean>() {
 					public Boolean call() {
 						boolean b = false;
 						try {
-							// synchronize with the removal:
-							if (null != removing) removing.get();
                             b = generateMipMaps(patch); // will remove the Future from the regenerating_mipmaps table, under proper gm_lock synchronization
 							Utils.showStatus(new StringBuilder("Regenerating mipmaps (").append(n_regenerating.get()).append(" to go)").toString());
 							Display.repaint(patch.getLayer());
