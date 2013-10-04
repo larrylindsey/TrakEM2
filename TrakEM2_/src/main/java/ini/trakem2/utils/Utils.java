@@ -83,6 +83,7 @@ import java.io.FileReader;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.io.PrintStream;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -125,6 +126,8 @@ public class Utils implements ij.plugin.PlugIn {
 	static public boolean debug_event = false;
 	static public boolean debug_clip = false; //clip for repainting
 	static public boolean debug_thing = false;
+
+    static private PrintStream printer = System.out;
 
 	/** The error to use in floating-point or double floating point literal comparisons. */
 	static public final double FL_ERROR = 0.0000001;
@@ -286,12 +289,22 @@ public class Utils implements ij.plugin.PlugIn {
 		if (null != logger) { logger.quit(); logger = null; }
 	}
 
+    static public synchronized void setLogStream(final PrintStream ps)
+    {
+        printer = ps;
+    }
+
+    static public PrintStream getLogStream()
+    {
+        return printer;
+    }
+
 	/** Intended for the user to see. */
 	static public final void log(final String msg) {
 		if (ControlWindow.isGUIEnabled() && null != logger) {
 			logger.log(msg);
 		} else {
-			System.out.println(msg);
+			printer.println(msg);
 		}
 	}
 	
@@ -300,17 +313,17 @@ public class Utils implements ij.plugin.PlugIn {
 		if (ControlWindow.isGUIEnabled() && null != logger) {
 			logger.log(new Date().toString() + " : " + msg);
 		} else {
-			System.out.println(new Date().toString() + " : " + msg);
+			printer.println(new Date().toString() + " : " + msg);
 		}
 	}
 
 	/** Print in all printable places: log window, System.out.println, and status bar.*/
 	static public final void logAll(final String msg) {
 		if (!ControlWindow.isGUIEnabled()) {
-			System.out.println(msg);
+			printer.println(msg);
 			return;
 		}
-		System.out.println(msg);
+		printer.println(msg);
 		if (null != IJ.getInstance() && null != logger) logger.log(msg);
 		if (null != status) status.showStatus(msg);
 	}
@@ -477,11 +490,11 @@ public class Utils implements ij.plugin.PlugIn {
 	}
 
 	static public final void showMessage(String msg) {
-		if (!ControlWindow.isGUIEnabled()) System.out.println(msg);
+		if (!ControlWindow.isGUIEnabled()) printer.println(msg);
 		else IJ.showMessage(msg);
 	}
 	static public final void showMessage(String title, String msg) {
-		if (!ControlWindow.isGUIEnabled()) System.out.println(title + "\n" + msg);
+		if (!ControlWindow.isGUIEnabled()) printer.println(title + "\n" + msg);
 		else IJ.showMessage(title, msg);
 	}
 
@@ -524,7 +537,7 @@ public class Utils implements ij.plugin.PlugIn {
 			if (last_progress + 0.01 > p ) {
 				int percent = (int)(p * 100);
 				if (last_percent != percent) {
-					System.out.println(percent + " %");
+					printer.println(percent + " %");
 					last_percent = percent;
 				}
 			}
