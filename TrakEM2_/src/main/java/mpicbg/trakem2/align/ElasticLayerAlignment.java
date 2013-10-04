@@ -1167,38 +1167,4 @@ J:            {
 		
 		exec( layerSet.getProject(), layerRange, fixedLayers, propagateTransformBefore, propagateTransformAfter, fov, filter );
 	}
-
-    private static class CopyableVertex extends Vertex
-    {
-
-        public CopyableVertex(final Vertex vertex) {
-            super(vertex);
-            for (int i = 0; i < direction.length; ++i)
-            {
-                direction[i] = vertex.getDirection()[i];
-                force[i] = vertex.getForces()[i];
-            }
-
-            forceAmplitude = vertex.getForce();
-            speed = vertex.getSpeed();
-
-            for (Vertex v : vertex.getConnectedVertices())
-            {
-                springs.put(v, vertex.getSpring(v));
-            }
-
-        }
-    }
-
-    public ArrayList<Vertex> copyVertices(final Collection<Vertex> from)
-    {
-        final ArrayList<Vertex> to = new ArrayList<Vertex>(from.size());
-        for (Vertex v : from)
-        {
-            to.add(new CopyableVertex(v));
-        }
-        return to;
-    }
-
-
 }
