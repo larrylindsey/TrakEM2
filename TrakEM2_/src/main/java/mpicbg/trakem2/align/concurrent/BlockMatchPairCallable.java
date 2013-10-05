@@ -2,11 +2,9 @@ package mpicbg.trakem2.align.concurrent;
 
 import ij.ImagePlus;
 import ij.process.FloatProcessor;
-import ini.trakem2.ControlWindow;
 import ini.trakem2.Project;
 import ini.trakem2.display.Layer;
 import ini.trakem2.display.Patch;
-import ini.trakem2.persistence.FSLoader;
 import ini.trakem2.utils.Filter;
 import mpicbg.ij.blockmatching.BlockMatching;
 import mpicbg.models.AbstractModel;
@@ -19,11 +17,9 @@ import mpicbg.trakem2.align.ElasticLayerAlignment;
 import mpicbg.trakem2.align.Util;
 import mpicbg.trakem2.util.Triple;
 
-import java.awt.*;
-import java.io.File;
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import java.awt.Rectangle;
+import java.awt.Image;
+import java.awt.Color;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -36,9 +32,6 @@ import java.util.concurrent.Callable;
 public class BlockMatchPairCallable implements
         Callable<BlockMatchPairCallable.BlockMatchResults>, Serializable
 {
-
-    private static Project lastProject = null;
-    private static File lastFile = null;
 
     public static class BlockMatchResults implements Serializable
     {
@@ -65,8 +58,6 @@ public class BlockMatchPairCallable implements
         }
     }
 
-//    private File projectFile = null;
-//    private double z1, z2;
     private Layer layer1, layer2;
     private final boolean layer1Fixed, layer2Fixed;
     private final Filter<Patch> filter;
@@ -96,8 +87,6 @@ public class BlockMatchPairCallable implements
         v1 = sourcePoints1;
         v2 = sourcePoints2;
         this.box = box;
-//        z1 = layer1.getZ();
-//        z2 = layer2.getZ();
     }
 
     @Override

@@ -16,6 +16,12 @@ public class SynchronizeBlockMatchFuture
     private final Future<BlockMatchPairCallable.BlockMatchResults> future;
     private final List<? extends Point> v1, v2;
 
+    static
+    {
+        System.out.println("Sync Ver B");
+    }
+
+
     public SynchronizeBlockMatchFuture(Future<BlockMatchPairCallable.BlockMatchResults> future,
                                        List<? extends Point> v1, List<? extends Point> v2)
     {
@@ -29,22 +35,24 @@ public class SynchronizeBlockMatchFuture
     {
         BlockMatchPairCallable.BlockMatchResults results = future.get();
 
-        if (results.v1 != v1)
+        /*if (results.v1 != v1)
         {
+            System.out.println("Syncing points v1");
             syncPoints(v1, results.v1);
             results.v1 = v1;
         }
 
         if (results.v2 != v2)
         {
+            System.out.println("Syncing points v2");
             syncPoints(v2, results.v2);
             results.v2 = v2;
-        }
+        }*/
 
         return results;
     }
 
-    public static void syncPoints(final List<? extends Point> toSync,
+    public static synchronized void syncPoints(final List<? extends Point> toSync,
                            final Collection<? extends Point> fromSync)
     {
         int i = 0;
