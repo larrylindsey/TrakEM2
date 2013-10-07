@@ -23,11 +23,14 @@ import ini.trakem2.Project;
 import ini.trakem2.display.Layer;
 import ini.trakem2.display.LayerSet;
 import ini.trakem2.display.Patch;
+import ini.trakem2.display.VectorData;
 import ini.trakem2.parallel.ExecutorProvider;
+import ini.trakem2.utils.AreaUtils;
 import ini.trakem2.utils.Filter;
 import ini.trakem2.utils.Utils;
 
 import java.awt.Rectangle;
+import java.awt.geom.Area;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -667,7 +670,18 @@ public class ElasticLayerAlignment
 		
 		final Layer first = layerRange.get( 0 );
 		final List< Layer > layers = first.getParent().getLayers();
-		
+
+        final LayerSet ls = first.getParent();
+        Area infArea = AreaUtils.infiniteArea();
+        final List<VectorData> vectorData = new ArrayList<VectorData>();
+        for (final Layer layer : ls.getLayers()) {
+            vectorData.addAll(
+                    Utils.castCollection(layer.getDisplayables(VectorData.class, false, true),
+                            VectorData.class, true));
+        }
+        vectorData.addAll(Utils.castCollection(ls.getZDisplayables(VectorData.class, true),
+                VectorData.class, true));
+
 		/* transfer layer transform into patch transforms and append to patches */
 		if ( propagateTransformBefore || propagateTransformAfter )
 		{
@@ -676,7 +690,14 @@ public class ElasticLayerAlignment
 				final MovingLeastSquaresTransform2 mlt = makeMLST2( meshes.get( 0 ).getVA().keySet() );
 				final int firstLayerIndex = first.getParent().getLayerIndex( first.getId() );
 				for ( int i = 0; i < firstLayerIndex; ++i )
+                {
 					applyTransformToLayer( layers.get( i ), mlt, filter );
+                    for (final VectorData vd : vectorData)
+                    {
+                        vd.apply(layers.get(i), infArea, mlt);
+                    }
+                }
+
 			}
 			if ( propagateTransformAfter )
 			{
@@ -684,7 +705,13 @@ public class ElasticLayerAlignment
 				final MovingLeastSquaresTransform2 mlt = makeMLST2( meshes.get( meshes.size() - 1 ).getVA().keySet() );
 				final int lastLayerIndex = last.getParent().getLayerIndex( last.getId() );
 				for ( int i = lastLayerIndex + 1; i < layers.size(); ++i )
-					applyTransformToLayer( layers.get( i ), mlt, filter );
+                {
+                    applyTransformToLayer( layers.get( i ), mlt, filter );
+                    for (final VectorData vd : vectorData)
+                    {
+                        vd.apply(layers.get(i), infArea, mlt);
+                    }
+                }
 			}
 		}
 		for ( int l = 0; l < layerRange.size(); ++l )
@@ -700,6 +727,11 @@ public class ElasticLayerAlignment
 			mlt.setMatches( meshes.get( l ).getVA().keySet() );
 			
 			applyTransformToLayer( layer, mlt, filter );
+
+            for (final VectorData vd : vectorData)
+            {
+                vd.apply(layer, infArea, mlt);
+            }
 					
 			if ( Thread.interrupted() )
 			{

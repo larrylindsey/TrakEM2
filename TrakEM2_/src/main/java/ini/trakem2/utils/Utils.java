@@ -1811,4 +1811,25 @@ public class Utils implements ij.plugin.PlugIn {
 		}
 		return true;
 	}
+
+    static public final <A, B> ArrayList<B> castCollection(
+            final Collection<A> classAs, final Class<B> type, final boolean doThrow)
+    {
+        ArrayList<B> classBs = new ArrayList<B>(classAs.size());
+        for (final A a : classAs)
+        {
+            try
+            {
+                classBs.add((B)a);
+            }
+            catch (final ClassCastException cce)
+            {
+                if (doThrow)
+                {
+                    throw cce;
+                }
+            }
+        }
+        return classBs;
+    }
 }
