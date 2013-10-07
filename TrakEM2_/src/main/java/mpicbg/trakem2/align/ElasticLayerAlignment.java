@@ -18,9 +18,7 @@ package mpicbg.trakem2.align;
 
 
 import ij.IJ;
-import ij.ImagePlus;
 import ij.gui.GenericDialog;
-import ij.process.FloatProcessor;
 import ini.trakem2.Project;
 import ini.trakem2.display.Layer;
 import ini.trakem2.display.LayerSet;
@@ -29,8 +27,6 @@ import ini.trakem2.parallel.ExecutorProvider;
 import ini.trakem2.utils.Filter;
 import ini.trakem2.utils.Utils;
 
-import java.awt.Color;
-import java.awt.Image;
 import java.awt.Rectangle;
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -40,17 +36,14 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import mpicbg.ij.blockmatching.BlockMatching;
 import mpicbg.imagefeatures.Feature;
 import mpicbg.imagefeatures.FloatArray2DSIFT;
 import mpicbg.models.AbstractModel;
 import mpicbg.models.AffineModel2D;
-import mpicbg.models.ErrorStatistic;
 import mpicbg.models.HomographyModel2D;
-import mpicbg.models.InvertibleCoordinateTransform;
 import mpicbg.models.NotEnoughDataPointsException;
 import mpicbg.models.Point;
 import mpicbg.models.PointMatch;
@@ -64,7 +57,6 @@ import mpicbg.models.Transforms;
 import mpicbg.models.TranslationModel2D;
 import mpicbg.models.Vertex;
 import mpicbg.trakem2.align.concurrent.BlockMatchPairCallable;
-import mpicbg.trakem2.align.concurrent.SynchronizeBlockMatchFuture;
 import mpicbg.trakem2.transform.MovingLeastSquaresTransform2;
 import mpicbg.trakem2.util.Triple;
 
@@ -73,7 +65,7 @@ import mpicbg.trakem2.util.Triple;
  */
 public class ElasticLayerAlignment
 {
-	final static public class Param extends AbstractLayerAlignmentParam implements Serializable
+	final static public class Param extends mpicbg.trakem2.align.AbstractLayerAlignmentParam implements Serializable
 	{
 		private static final long serialVersionUID = 3366971916160734613L;
 
@@ -199,7 +191,7 @@ public class ElasticLayerAlignment
 			gdOptimize.addNumericField( "maximal_stretch :", maxStretchSpringMesh, 2, 6, "px" );
 			gdOptimize.addNumericField( "maximal_iterations :", maxIterationsSpringMesh, 0 );
 			gdOptimize.addNumericField( "maximal_plateauwidth :", maxPlateauwidthSpringMesh, 0 );
-			gdOptimize.addCheckbox( "use_legacy_optimizer :", useLegacyOptimizer );
+			gdOptimize.addCheckbox("use_legacy_optimizer :", useLegacyOptimizer);
 			
 			gdOptimize.showDialog();
 			
@@ -481,8 +473,8 @@ public class ElasticLayerAlignment
 		
 		Utils.log( "effective block radius = " + blockRadius );
 
-        final ArrayList<SynchronizeBlockMatchFuture> futures =
-                new ArrayList<SynchronizeBlockMatchFuture>(pairs.size());
+        final ArrayList<Future<BlockMatchPairCallable.BlockMatchResults>> futures =
+                new ArrayList<Future<BlockMatchPairCallable.BlockMatchResults>>(pairs.size());
 
 		
 		for ( final Triple< Integer, Integer, AbstractModel< ? > > pair : pairs )
@@ -514,13 +506,13 @@ public class ElasticLayerAlignment
                         param,
                         v1, v2,
                         box);
-                futures.add(new SynchronizeBlockMatchFuture(service.submit(bmpc), v1, v2));
+                futures.add(service.submit(bmpc));
             }
         }
 
-        for (final SynchronizeBlockMatchFuture future : futures)
+        for (final Future<BlockMatchPairCallable.BlockMatchResults> future : futures)
         {
-            final BlockMatchPairCallable.BlockMatchResults results = future.getResults();
+            final BlockMatchPairCallable.BlockMatchResults results = future.get();
             final Collection<PointMatch> pm12 = results.pm12, pm21 = results.pm21;
             final Triple<Integer, Integer, AbstractModel<?>> pair = results.pair;
             final Tile< ? > t1 = tiles.get( pair.a );
