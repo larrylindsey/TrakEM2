@@ -1533,11 +1533,18 @@ public class Utils implements ij.plugin.PlugIn {
 
 	/** Convert a D:\\this\that\there to D://this/that/there/
 	 *  Notice it adds an ending backslash. */
-	static public final String fixDir(String path) {
-		if (IJ.isWindows()) path = path.replace('\\', '/');
-		return '/' == path.charAt(path.length() -1) ?
-			  path
-			: new StringBuilder(path.length() +1).append(path).append('/').toString();
+	static public String fixDir(String path) {
+        if (path == null || path.isEmpty())
+        {
+            return "";
+        }
+        else
+        {
+            if (IJ.isWindows()) path = path.replace('\\', '/');
+            return '/' == path.charAt(path.length() -1) ?
+                    path
+                    : new StringBuilder(path.length() +1).append(path).append('/').toString();
+        }
 	}
 
 	/** Creates a new fixed thread pool whose threads are in the same ThreadGroup as the Thread that calls this method.

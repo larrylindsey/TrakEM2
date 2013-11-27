@@ -103,11 +103,20 @@ public class Util
 		
 		final Loader loader = project.getLoader();
 		final Features fe = new Features( key, list );
-		return loader.serialize(
-				fe,
-				new StringBuilder( loader.getUNUIdFolder() )
-					.append( "features.ser/" )
-					.append( FSLoader.createIdPath( Long.toString( id ), name, ".ser" ) ).toString() );
+        final String path = new StringBuilder( loader.getUNUIdFolder() )
+                .append( "features.ser/" )
+                .append( FSLoader.createIdPath( Long.toString( id ), name, ".ser" ) ).toString();
+        if (fe.features != null)
+        {
+            System.out.println("Serializing " + fe.features.size() + " features to " + path + " ...");
+        }
+        else
+        {
+            System.out.println("Serializing NULL features to " + path + " ...");
+        }
+        final boolean ok = loader.serialize(fe, path );
+        System.out.println("\t" + (ok ? "ok" : "FAIL"));
+        return ok;
 	}
 
 	
@@ -134,29 +143,44 @@ public class Util
 		final String name = prefix == null ? "features" : prefix + ".features";
 		
 		final Loader loader = project.getLoader();
+        final String path =
+                new StringBuilder( loader.getUNUIdFolder() )
+                        .append( "features.ser/" )
+                        .append( FSLoader.createIdPath( Long.toString( id ), name, ".ser" ) ).toString();
 
-		final Object ob = loader.deserialize(
-				new StringBuilder( loader.getUNUIdFolder() )
-					.append( "features.ser/" )
-					.append( FSLoader.createIdPath( Long.toString( id ), name, ".ser" ) ).toString() );
+        System.out.println("Deserializing features from " + path);
+
+		final Object ob = loader.deserialize( path );
 		
 		if ( ob != null )
 		{
+            System.out.println("\tDeserialized object was not null");
 			try
 			{
 				final Features fe = ( Features )ob;
 //				Utils.log( fe.key == null ? "key is null" : key.equals( fe.key ) ? "key is equal" : "key is not equal" );
 				if ( fe.key != null && key.equals( fe.key ) )
+                {
+                    System.out.println("\t" + fe.features.size() +" features deserialized ok");
 					return fe.features;
+                }
+                else
+                {
+                    System.out.println("\tKeys did not match");
+                }
 			}
 			catch ( final Exception e )
 			{
+                System.out.println("\tCaught an exception during deserialization");
 				Utils.log( "Exception during feature deserialization." );
 				e.printStackTrace();
 			}
 		}
 		else
+        {
+            System.out.println("features file null");
 			Utils.log( "features file null" );
+        }
 		return null;
 	}
 	

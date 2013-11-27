@@ -133,7 +133,12 @@ public class Project extends DBObject {
 			setContextClassLoader(ij.IJ.getClassLoader());
 			final String plugins_dir = Utils.fixDir(ij.Menus.getPlugInsPath());
 			synchronized (PLUGIN_SOURCES) {
-			for (String name : new File(plugins_dir).list()) {
+            String[] list = new File(plugins_dir).list();
+            if (list == null)
+            {
+                list = new String[0];
+            }
+			for (String name : list) {
 				File f = new File(name);
 				if (f.isHidden() || !name.toLowerCase().endsWith(".jar")) continue;
 				JarFile jar = new JarFile(plugins_dir + name);
