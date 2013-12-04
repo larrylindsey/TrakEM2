@@ -173,26 +173,28 @@ public class Util
                     {
                         FloatArray2DSIFT.Param pkey = (FloatArray2DSIFT.Param)key;
                         FloatArray2DSIFT.Param fepkey = (FloatArray2DSIFT.Param)fe.key;
+                        boolean hereEquals, objEquals, paramEquals;
 
-                        if (pkey.fdSize != fepkey.fdSize)
+                        System.out.print("fdSize " + pkey.fdSize + " " + fepkey.fdSize + ", ");
+                        System.out.print("fdBins " + pkey.fdBins + " " + fepkey.fdBins + ", ");
+                        System.out.print("maxOctaveSize " + pkey.maxOctaveSize + " " + fepkey.maxOctaveSize + ", ");
+                        System.out.print("steps " + pkey.steps + " " + fepkey.steps + ", ");
+                        System.out.println("initialSigma " + pkey.initialSigma + " " + fepkey.initialSigma + ", ");
+
+                        hereEquals = pkey.fdSize == fepkey.fdSize;
+                        hereEquals &= pkey.fdBins == fepkey.fdBins;
+                        hereEquals &= pkey.maxOctaveSize == fepkey.maxOctaveSize;
+                        hereEquals &= pkey.steps == fepkey.steps;
+                        hereEquals &= pkey.initialSigma == fepkey.initialSigma;
+
+                        objEquals = key.equals(fe.key);
+                        paramEquals = pkey.equals(fepkey);
+
+                        System.out.println("Object: " + objEquals + ", param: " + paramEquals + ", manual: " + hereEquals);
+
+                        if (hereEquals)
                         {
-                            System.out.print("fdSize " + pkey.fdSize + " " + fepkey.fdSize + ", ");
-                        }
-                        if (pkey.fdBins != fepkey.fdBins)
-                        {
-                            System.out.print("fdBins " + pkey.fdBins + " " + fepkey.fdBins + ", ");
-                        }
-                        if (pkey.maxOctaveSize != fepkey.maxOctaveSize)
-                        {
-                            System.out.print("maxOctaveSize " + pkey.maxOctaveSize + " " + fepkey.maxOctaveSize + ", ");
-                        }
-                        if (pkey.steps != fepkey.steps)
-                        {
-                            System.out.print("steps " + pkey.steps + " " + fepkey.steps + ", ");
-                        }
-                        if (pkey.initialSigma != fepkey.initialSigma)
-                        {
-                            System.out.print("initialSigma " + pkey.initialSigma + " " + fepkey.initialSigma + ", ");
+                            return fe.features;
                         }
 
                     }
