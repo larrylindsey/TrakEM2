@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 
 import mpicbg.imagefeatures.Feature;
+import mpicbg.imagefeatures.FloatArray2DSIFT;
 import mpicbg.models.AbstractModel;
 import mpicbg.models.HomographyModel2D;
 import mpicbg.models.PointMatch;
@@ -167,6 +168,40 @@ public class Util
                 else
                 {
                     System.out.println("\tKeys did not match");
+                    if (key instanceof FloatArray2DSIFT.Param &&
+                            fe.key instanceof FloatArray2DSIFT.Param)
+                    {
+                        FloatArray2DSIFT.Param pkey = (FloatArray2DSIFT.Param)key;
+                        FloatArray2DSIFT.Param fepkey = (FloatArray2DSIFT.Param)fe.key;
+
+                        if (pkey.fdSize != fepkey.fdSize)
+                        {
+                            System.out.print("fdSize " + pkey.fdSize + " " + fepkey.fdSize + ", ");
+                        }
+                        if (pkey.fdBins != fepkey.fdBins)
+                        {
+                            System.out.print("fdBins " + pkey.fdBins + " " + fepkey.fdBins + ", ");
+                        }
+                        if (pkey.maxOctaveSize != fepkey.maxOctaveSize)
+                        {
+                            System.out.print("maxOctaveSize " + pkey.maxOctaveSize + " " + fepkey.maxOctaveSize + ", ");
+                        }
+                        if (pkey.steps != fepkey.steps)
+                        {
+                            System.out.print("steps " + pkey.steps + " " + fepkey.steps + ", ");
+                        }
+                        if (pkey.initialSigma != fepkey.initialSigma)
+                        {
+                            System.out.print("initialSigma " + pkey.initialSigma + " " + fepkey.initialSigma + ", ");
+                        }
+
+                    }
+                    else
+                    {
+                        System.out.println("Did not find FloatArray2DSIFT.Param objects");
+                        System.out.println("key: " + key.getClass().getCanonicalName());
+                        System.out.println("fe.key: " + fe.key.getClass().getCanonicalName());
+                    }
                 }
 			}
 			catch ( final Exception e )
