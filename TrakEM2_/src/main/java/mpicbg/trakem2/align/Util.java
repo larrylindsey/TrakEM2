@@ -177,6 +177,7 @@ public class Util
 
                         System.out.print("fdSize " + pkey.fdSize + " " + fepkey.fdSize + ", ");
                         System.out.print("fdBins " + pkey.fdBins + " " + fepkey.fdBins + ", ");
+                        System.out.print("minOctaveSize " + pkey.minOctaveSize + " " + fepkey.minOctaveSize + ", ");
                         System.out.print("maxOctaveSize " + pkey.maxOctaveSize + " " + fepkey.maxOctaveSize + ", ");
                         System.out.print("steps " + pkey.steps + " " + fepkey.steps + ", ");
                         System.out.println("initialSigma " + pkey.initialSigma + " " + fepkey.initialSigma + ", ");
@@ -184,6 +185,7 @@ public class Util
                         hereEquals = pkey.fdSize == fepkey.fdSize;
                         hereEquals &= pkey.fdBins == fepkey.fdBins;
                         hereEquals &= pkey.maxOctaveSize == fepkey.maxOctaveSize;
+                        hereEquals &= pkey.minOctaveSize == fepkey.minOctaveSize;
                         hereEquals &= pkey.steps == fepkey.steps;
                         hereEquals &= pkey.initialSigma == fepkey.initialSigma;
 
