@@ -145,6 +145,7 @@ public class Profile extends Displayable implements VectorData {
 		n_points = p[0].length;
 
 		//calculate width and height
+        generateInterpolatedPoints(0.05);
 		calculateBoundingBox(false);
 	}
 
