@@ -465,25 +465,14 @@ public class Align
 	final static protected class ExtractFeaturesCallable implements Callable<Boolean>
 	{
 		final protected Param p;
-		final protected List< AbstractAffineTile2D< ? > > tiles;
-//		final protected HashMap< AbstractAffineTile2D< ? >, Collection< Feature > > tileFeatures;
-		final protected AtomicInteger ai;
-		final protected AtomicInteger ap;
-		final protected int steps;
-		
+		final protected AbstractAffineTile2D< ? > tile;
+
 		public ExtractFeaturesCallable(
                 final Param p,
-                final List<AbstractAffineTile2D<?>> tiles,
-//				final HashMap< AbstractAffineTile2D< ? >, Collection< Feature > > tileFeatures,
-                final AtomicInteger ai,
-                final AtomicInteger ap,
-                final int steps)
+                final AbstractAffineTile2D<?> tile)
 		{
 			this.p = p;
-			this.tiles = tiles;
-			this.ai = ai;
-			this.ap = ap;
-			this.steps = steps;
+			this.tile = tile;
 		}
 		
 		@Override
@@ -492,10 +481,7 @@ public class Align
 			final FloatArray2DSIFT sift = new FloatArray2DSIFT( p.sift );
 			final SIFT ijSIFT = new SIFT( sift );
 
-			for ( int i = ai.getAndIncrement(); i < tiles.size() && !Thread.interrupted(); i = ai.getAndIncrement() )
 			{
-				if (Thread.interrupted()) return false;
-				final AbstractAffineTile2D< ? > tile = tiles.get( i );
 				Collection< Feature > features = deserializeFeatures( p, tile );
 				if ( features == null )
 				{
@@ -508,7 +494,9 @@ public class Align
 							features = new ArrayList< Feature >();
 							final long s = System.currentTimeMillis();
 							ijSIFT.extractFeatures( tile.createMaskedByteImage(), features );
-							Utils.log( features.size() + " features extracted in tile " + i + " \"" + tile.getPatch().getTitle() + "\" (took " + ( System.currentTimeMillis() - s ) + " ms)." );
+							Utils.log( features.size() + " features extracted in tile " +
+                                    tile.getPatch().getTitle() +
+                                    "\" (took " + ( System.currentTimeMillis() - s ) + " ms)." );
 							if ( !serializeFeatures( p, tile, features ) )
 								Utils.log( "Saving features failed for tile \"" + tile.getPatch() + "\"" );
 							memoryFlushed = false;
@@ -524,9 +512,10 @@ public class Align
 				}
 				else
 				{
-					Utils.log( features.size() + " features loaded for tile " + i + " \"" + tile.getPatch().getTitle() + "\"." );
+					Utils.log( features.size() + " features loaded for tile " +
+                            tile.getPatch().getTitle() + "\"." );
 				}
-				IJ.showProgress( ap.getAndIncrement(), steps );				
+
 			}
             return true;
 		}
@@ -536,27 +525,15 @@ public class Align
 	final static protected class MatchFeaturesAndFindModelCallable implements Callable<Boolean>
 	{
 		final protected Param p;
-		final protected List< AbstractAffineTile2D< ? > > tiles;
 		//final protected HashMap< AbstractAffineTile2D< ? >, Collection< Feature > > tileFeatures;
-		final protected List< AbstractAffineTile2D< ? >[] > tilePairs;
-		final protected AtomicInteger ai;
-		final protected AtomicInteger ap;
-		final protected int steps;
-		
+		final protected AbstractAffineTile2D< ? >[] tilePair;
+
 		public MatchFeaturesAndFindModelCallable(
                 final Param p,
-                final List<AbstractAffineTile2D<?>> tiles,
-                final List<AbstractAffineTile2D<?>[]> tilePairs,
-                final AtomicInteger ai,
-                final AtomicInteger ap,
-                final int steps)
+                final AbstractAffineTile2D<?>[] tilePair)
 		{
 			this.p = p;
-			this.tiles = tiles;
-			this.tilePairs = tilePairs;
-			this.ai = ai;
-			this.ap = ap;
-			this.steps = steps;
+			this.tilePair = tilePair;
 		}
 		
 		@Override
@@ -564,12 +541,10 @@ public class Align
 		{
 			final List< PointMatch > candidates = new ArrayList< PointMatch >();
 				
-			for ( int i = ai.getAndIncrement(); i < tilePairs.size() && !Thread.interrupted(); i = ai.getAndIncrement() )
 			{
 				if (Thread.interrupted()) return false;
 				candidates.clear();
-				final AbstractAffineTile2D< ? >[] tilePair = tilePairs.get( i );
-				
+
 				Collection< PointMatch > inliers = deserializePointMatches( p, tilePair[ 0 ], tilePair[ 1 ] );
 				
 				if ( inliers == null )
@@ -621,7 +596,7 @@ public class Align
 					
 					if ( !serializePointMatches( p, tilePair[ 0 ], tilePair[ 1 ], inliers ) )
 						Utils.log( "Saving point matches failed for tiles \"" + tilePair[ 0 ].getPatch() + "\" and \"" + tilePair[ 1 ].getPatch() + "\"" );
-					
+
 				}
 				else
 					Utils.log( "Point matches for tiles \"" + tilePair[ 0 ].getPatch().getTitle() + "\" and \"" + tilePair[ 1 ].getPatch().getTitle() + "\" fetched from disk cache" );
@@ -639,8 +614,6 @@ public class Align
 					}
 					synchronized ( tilePair[ 1 ] ) { tilePair[ 1 ].clearVirtualMatches(); }
 				}
-				
-				IJ.showProgress( ap.getAndIncrement(), steps );
 			}
             return true;
 		}
@@ -1054,8 +1027,6 @@ public class Align
 		final AtomicInteger ai = new AtomicInteger( 0 );
 		final AtomicInteger ap = new AtomicInteger( 0 );
 		final int steps = tiles.size() + tilePairs.size();
-		final List<ExtractFeaturesCallable> extractFeaturesCallables = new ArrayList<ExtractFeaturesCallable>();
-		final List<MatchFeaturesAndFindModelCallable> matchFeaturesAndFindModelThreads = new ArrayList<MatchFeaturesAndFindModelCallable>();
         final List<Future<Boolean>> extractFeaturesFutures = new ArrayList<Future<Boolean>>();
         final List<Future<Boolean>> matchFeaturesAndFindModelFutures = new ArrayList<Future<Boolean>>();
 
@@ -1063,12 +1034,12 @@ public class Align
 
         boolean err = false;
 
-		/** Extract and save Features */
-		for ( int i = 0; i < numThreads; ++i )
-		{
-			final ExtractFeaturesCallable callable = new ExtractFeaturesCallable( p.clone(), tiles, ai, ap, steps );
-			extractFeaturesFutures.add(es.submit(callable));
-		}
+        /** Extract and save Features */
+        for (final AbstractAffineTile2D<?> tile : tiles)
+        {
+            final ExtractFeaturesCallable callable = new ExtractFeaturesCallable( p.clone(), tile);
+            extractFeaturesFutures.add(es.submit(callable));
+        }
 
 		try
 		{
@@ -1077,6 +1048,7 @@ public class Align
             {
                 extractFeaturesFutures.remove(future);
                 future.get();
+                IJ.showProgress( ap.getAndIncrement(), steps );
             }
 
 		}
@@ -1103,10 +1075,10 @@ public class Align
 		
 		/** Establish correspondences */
 		ai.set( 0 );
-		for ( int i = 0; i < numThreads; ++i )
+        for (final AbstractAffineTile2D<?>[] tilePair : tilePairs)
 		{
 			final MatchFeaturesAndFindModelCallable callable =
-                    new MatchFeaturesAndFindModelCallable( p.clone(), tiles, tilePairs, ai, ap, steps );
+                    new MatchFeaturesAndFindModelCallable( p.clone(), tilePair);
 			matchFeaturesAndFindModelFutures.add(es.submit(callable));
 		}
 		try
@@ -1116,6 +1088,7 @@ public class Align
             {
                 matchFeaturesAndFindModelFutures.remove(future);
 				future.get();
+                IJ.showProgress( ai.getAndIncrement(), steps );
             }
 		}
 		catch ( final InterruptedException e )
