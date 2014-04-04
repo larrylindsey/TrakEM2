@@ -25,11 +25,13 @@ import ini.trakem2.Project;
 import ini.trakem2.display.Display;
 import ini.trakem2.display.Patch;
 import ini.trakem2.display.Patch.PatchImage;
+import ini.trakem2.parallel.ExecutorProvider;
 import ini.trakem2.utils.Utils;
 
 import java.awt.Rectangle;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +61,7 @@ import mpicbg.models.SpringMesh;
 import mpicbg.models.TranslationModel2D;
 import mpicbg.models.Vertex;
 import mpicbg.trakem2.align.Align.ParamOptimize;
+import mpicbg.trakem2.align.concurrent.BlockMatchPatchCallable;
 import mpicbg.trakem2.transform.MovingLeastSquaresTransform2;
 import mpicbg.trakem2.util.Triple;
 import mpicbg.util.Util;
@@ -502,153 +505,80 @@ public class ElasticMontage
 		final int searchRadius = param.bmSearchRadius;
 		
 		final AbstractModel< ? > localSmoothnessFilterModel = mpicbg.trakem2.align.Util.createModel( param.bmLocalModelIndex );
-	
+
+        final ArrayList<Future<BlockMatchPatchCallable.BlockMatchResults>> blockMatchFutures =
+                new ArrayList<Future<BlockMatchPatchCallable.BlockMatchResults>>(pairs.size());
+
+        final ExecutorService es = ExecutorProvider.getExecutorService(1);
 		
 		for ( final Triple< AbstractAffineTile2D< ? >, AbstractAffineTile2D< ? >, InvertibleCoordinateTransform > pair : pairs )
 		{
+
+
 			final AbstractAffineTile2D< ? > t1 = pair.a;
 			final AbstractAffineTile2D< ? > t2 = pair.b;
 
 			final SpringMesh m1 = tileMeshMap.get( t1 );
 			final SpringMesh m2 = tileMeshMap.get( t2 );
 
-			final ArrayList< PointMatch > pm12 = new ArrayList< PointMatch >();
-			final ArrayList< PointMatch > pm21 = new ArrayList< PointMatch >();
-
 			final ArrayList< Vertex > v1 = m1.getVertices();
 			final ArrayList< Vertex > v2 = m2.getVertices();
-			
-			final String patchName1 = patchName( t1.getPatch() );
-			final String patchName2 = patchName( t2.getPatch() );
-			
-			final PatchImage pi1 = t1.getPatch().createTransformedImage();
-			if ( pi1 == null )
-			{
-				Utils.log( "Patch `" + patchName1 + "' failed generating a transformed image.  Skipping..." );
-				continue;
-			}
-			final PatchImage pi2 = t2.getPatch().createTransformedImage();
-			if ( pi2 == null )
-			{
-				Utils.log( "Patch `" + patchName2 + "' failed generating a transformed image.  Skipping..." );
-				continue;
-			}
-			
-			final FloatProcessor fp1 = ( FloatProcessor )pi1.target.convertToFloat();
-			final ByteProcessor mask1 = pi1.getMask();
-			final FloatProcessor fpMask1 = mask1 == null ? null : scaleByte( mask1 );
-			
-			final FloatProcessor fp2 = ( FloatProcessor )pi2.target.convertToFloat();
-			final ByteProcessor mask2 = pi2.getMask();
-			final FloatProcessor fpMask2 = mask2 == null ? null : scaleByte( mask2 );
-			
-			if ( !fixedTiles.contains( t1 ) )
-			{
-				BlockMatching.matchByMaximalPMCC(
-						fp1,
-						fp2,
-						fpMask1,
-						fpMask2,
-						param.bmScale,
-						pair.c,
-						blockRadius,
-						blockRadius,
-						searchRadius,
-						searchRadius,
-						param.bmMinR,
-						param.bmRodR,
-						param.bmMaxCurvatureR,
-						v1,
-						pm12,
-						new ErrorStatistic( 1 ) );
-	
-				if ( param.bmUseLocalSmoothnessFilter )
-				{
-					Utils.log( "`" + patchName1 + "' > `" + patchName2 + "': found " + pm12.size() + " correspondence candidates." );
-					localSmoothnessFilterModel.localSmoothnessFilter( pm12, pm12, param.bmLocalRegionSigma, param.bmMaxLocalEpsilon, param.bmMaxLocalTrust );
-					Utils.log( "`" + patchName1 + "' > `" + patchName2 + "': " + pm12.size() + " candidates passed local smoothness filter." );
-				}
-				else
-				{
-					Utils.log( "`" + patchName1 + "' > `" + patchName2 + "': found " + pm12.size() + " correspondences." );
-				}
-			}
-			else
-			{
-				Utils.log( "Skipping fixed patch `" + patchName1 + "'." );
-			}
 
-//			/* <visualisation> */
-//			//			final List< Point > s1 = new ArrayList< Point >();
-//			//			PointMatch.sourcePoints( pm12, s1 );
-//			//			final ImagePlus imp1 = new ImagePlus( i + " >", ip1 );
-//			//			imp1.show();
-//			//			imp1.setOverlay( BlockMatching.illustrateMatches( pm12 ), Color.yellow, null );
-//			//			imp1.setRoi( Util.pointsToPointRoi( s1 ) );
-//			//			imp1.updateAndDraw();
-//			/* </visualisation> */
+            blockMatchFutures.add(es.submit(new BlockMatchPatchCallable(pair,
+                    fixedTiles, param, v1, v2, localSmoothnessFilterModel)));
 
-			if ( !fixedTiles.contains( t2 ) )
-			{
-				BlockMatching.matchByMaximalPMCC(
-						fp2,
-						fp1,
-						fpMask2,
-						fpMask1,
-						param.bmScale,
-						pair.c.createInverse(),
-						blockRadius,
-						blockRadius,
-						searchRadius,
-						searchRadius,
-						param.bmMinR,
-						param.bmRodR,
-						param.bmMaxCurvatureR,
-						v2,
-						pm21,
-						new ErrorStatistic( 1 ) );
-	
-				if ( param.bmUseLocalSmoothnessFilter )
-				{
-					Utils.log( "`" + patchName1 + "' < `" + patchName2 + "': found " + pm21.size() + " correspondence candidates." );
-					localSmoothnessFilterModel.localSmoothnessFilter( pm21, pm21, param.bmLocalRegionSigma, param.bmMaxLocalEpsilon, param.bmMaxLocalTrust );
-					Utils.log( "`" + patchName1 + "' < `" + patchName2 + "': " + pm21.size() + " candidates passed local smoothness filter." );
-				}
-				else
-				{
-					Utils.log( "`" + patchName1 + "' < `" + patchName2 + "': found " + pm21.size() + " correspondences." );
-				}
-			}
-			else
-			{
-				Utils.log( "Skipping fixed patch `" + patchName2 + "'." );
-			}
-			
+        }
+
+        for(Future<BlockMatchPatchCallable.BlockMatchResults> future : blockMatchFutures)
+        {
+            BlockMatchPatchCallable.BlockMatchResults result;
+
+            try
+            {
+                result = future.get();
+            }
+            catch (InterruptedException ie)
+            {
+                result = null;
+            }
+
+            if (result != null)
+            {
+
+                // included for posterity
 			/* <visualisation> */
-			//			final List< Point > s2 = new ArrayList< Point >();
-			//			PointMatch.sourcePoints( pm21, s2 );
-			//			final ImagePlus imp2 = new ImagePlus( i + " <", ip2 );
-			//			imp2.show();
-			//			imp2.setOverlay( BlockMatching.illustrateMatches( pm21 ), Color.yellow, null );
-			//			imp2.setRoi( Util.pointsToPointRoi( s2 ) );
-			//			imp2.updateAndDraw();
+                //			final List< Point > s2 = new ArrayList< Point >();
+                //			PointMatch.sourcePoints( pm21, s2 );
+                //			final ImagePlus imp2 = new ImagePlus( i + " <", ip2 );
+                //			imp2.show();
+                //			imp2.setOverlay( BlockMatching.illustrateMatches( pm21 ), Color.yellow, null );
+                //			imp2.setRoi( Util.pointsToPointRoi( s2 ) );
+                //			imp2.updateAndDraw();
 			/* </visualisation> */
-			
-			for ( final PointMatch pm : pm12 )
-			{
-				final Vertex p1 = ( Vertex )pm.getP1();
-				final Vertex p2 = new Vertex( pm.getP2() );
-				p1.addSpring( p2, new Spring( 0, 1.0f ) );
-				m2.addPassiveVertex( p2 );
-			}
-		
-			for ( final PointMatch pm : pm21 )
-			{
-				final Vertex p1 = ( Vertex )pm.getP1();
-				final Vertex p2 = new Vertex( pm.getP2() );
-				p1.addSpring( p2, new Spring( 0, 1.0f ) );
-				m1.addPassiveVertex( p2 );
-			}
+
+                final Collection<PointMatch> pm12 = result.pm12;
+                final Collection<PointMatch> pm21 = result.pm21;
+                final AbstractAffineTile2D<?> t1 = result.t1;
+                final AbstractAffineTile2D<?> t2 = result.t2;
+                final SpringMesh m1 = tileMeshMap.get( t1 );
+                final SpringMesh m2 = tileMeshMap.get( t2 );
+
+                for ( final PointMatch pm : pm12 )
+                {
+                    final Vertex p1 = ( Vertex )pm.getP1();
+                    final Vertex p2 = new Vertex( pm.getP2() );
+                    p1.addSpring( p2, new Spring( 0, 1.0f ) );
+                    m2.addPassiveVertex( p2 );
+                }
+
+                for ( final PointMatch pm : pm21 )
+                {
+                    final Vertex p1 = ( Vertex )pm.getP1();
+                    final Vertex p2 = new Vertex( pm.getP2() );
+                    p1.addSpring( p2, new Spring( 0, 1.0f ) );
+                    m1.addPassiveVertex( p2 );
+                }
+            }
 		}
 		
 		/* initialize */

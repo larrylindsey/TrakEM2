@@ -29,8 +29,8 @@ import java.util.concurrent.Callable;
 /**
  *
  */
-public class BlockMatchPairCallable implements
-        Callable<BlockMatchPairCallable.BlockMatchResults>, Serializable
+public class BlockMatchLayerCallable implements
+        Callable<BlockMatchLayerCallable.BlockMatchResults>, Serializable
 {
 
     public static class BlockMatchResults implements Serializable
@@ -67,15 +67,15 @@ public class BlockMatchPairCallable implements
     private final Triple<Integer, Integer, AbstractModel<?>> pair;
 
 
-    public BlockMatchPairCallable(final Triple<Integer, Integer, AbstractModel<?>> pair,
-                                  final List<Layer> layerRange,
-                                  final boolean layer1Fixed,
-                                  final boolean layer2Fixed,
-                                  final Filter<Patch> filter,
-                                  final ElasticLayerAlignment.Param param,
-                                  final Collection< ? extends Point > sourcePoints1,
-                                  final Collection< ? extends Point > sourcePoints2,
-                                  final Rectangle box)
+    public BlockMatchLayerCallable(final Triple<Integer, Integer, AbstractModel<?>> pair,
+                                   final List<Layer> layerRange,
+                                   final boolean layer1Fixed,
+                                   final boolean layer2Fixed,
+                                   final Filter<Patch> filter,
+                                   final ElasticLayerAlignment.Param param,
+                                   final Collection<? extends Point> sourcePoints1,
+                                   final Collection<? extends Point> sourcePoints2,
+                                   final Rectangle box)
     {
         this.pair = pair;
         layer1 = layerRange.get(pair.a);

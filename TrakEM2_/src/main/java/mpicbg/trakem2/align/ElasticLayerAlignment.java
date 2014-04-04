@@ -59,7 +59,7 @@ import mpicbg.models.TileConfiguration;
 import mpicbg.models.Transforms;
 import mpicbg.models.TranslationModel2D;
 import mpicbg.models.Vertex;
-import mpicbg.trakem2.align.concurrent.BlockMatchPairCallable;
+import mpicbg.trakem2.align.concurrent.BlockMatchLayerCallable;
 import mpicbg.trakem2.transform.MovingLeastSquaresTransform2;
 import mpicbg.trakem2.util.Triple;
 
@@ -476,8 +476,8 @@ public class ElasticLayerAlignment
 		
 		Utils.log( "effective block radius = " + blockRadius );
 
-        final ArrayList<Future<BlockMatchPairCallable.BlockMatchResults>> futures =
-                new ArrayList<Future<BlockMatchPairCallable.BlockMatchResults>>(pairs.size());
+        final ArrayList<Future<BlockMatchLayerCallable.BlockMatchResults>> futures =
+                new ArrayList<Future<BlockMatchLayerCallable.BlockMatchResults>>(pairs.size());
 
 		
 		for ( final Triple< Integer, Integer, AbstractModel< ? > > pair : pairs )
@@ -501,7 +501,7 @@ public class ElasticLayerAlignment
 
 			if ( !( layer1Fixed && layer2Fixed ) )
 			{
-                BlockMatchPairCallable bmpc = new BlockMatchPairCallable(
+                BlockMatchLayerCallable bmpc = new BlockMatchLayerCallable(
                         pair,
                         layerRange,
                         layer1Fixed, layer2Fixed,
@@ -513,9 +513,9 @@ public class ElasticLayerAlignment
             }
         }
 
-        for (final Future<BlockMatchPairCallable.BlockMatchResults> future : futures)
+        for (final Future<BlockMatchLayerCallable.BlockMatchResults> future : futures)
         {
-            final BlockMatchPairCallable.BlockMatchResults results = future.get();
+            final BlockMatchLayerCallable.BlockMatchResults results = future.get();
             final Collection<PointMatch> pm12 = results.pm12, pm21 = results.pm21;
             final Triple<Integer, Integer, AbstractModel<?>> pair = results.pair;
             final Tile< ? > t1 = tiles.get( pair.a );
