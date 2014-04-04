@@ -20,6 +20,8 @@ import ini.trakem2.utils.Utils;
 import java.awt.Color;
 import java.awt.Rectangle;
 import java.awt.geom.AffineTransform;
+import java.io.IOException;
+import java.io.ObjectInputStream;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -462,7 +464,7 @@ public class Align
 	 * Extracts {@link Feature SIFT-features} from a {@link List} of
 	 * {@link AbstractAffineTile2D Tiles} and saves them to disk.
 	 */
-	final static protected class ExtractFeaturesCallable implements Callable<Boolean>
+	final static protected class ExtractFeaturesCallable implements Callable<Boolean>, Serializable
 	{
 		final protected Param p;
 		final protected AbstractAffineTile2D< ? > tile;
@@ -520,9 +522,42 @@ public class Align
             return true;
 		}
 	}
-		
-	
-	final static protected class MatchFeaturesAndFindModelCallable implements Callable<Boolean>
+
+
+    /**
+     * This class exists for Fiji Archipelago compatibility purposes. Normally, it does exactly
+     * nothing other than hold some references. In the Fiji Archipelago case, it gets de-serialized
+     * on the root node computer, where it does some things behind the scenes to fake some
+     * side-effects that wouldn't be apparent otherwise.
+     */
+	final static protected class MatchVoodoo implements Serializable
+    {
+        private final AbstractAffineTile2D<?>[] tilePair;
+        private final Collection<PointMatch> inliers;
+
+        public MatchVoodoo(final AbstractAffineTile2D<?>[] tilePair,
+                                  final Collection<PointMatch> inliers)
+        {
+            this.tilePair = tilePair;
+            this.inliers = inliers;
+        }
+
+        private void readObject(ObjectInputStream ois) throws ClassNotFoundException, IOException
+        {
+            ois.defaultReadObject();
+
+            synchronized ( tilePair[ 0 ] )
+            {
+                synchronized ( tilePair[ 1 ] ) { tilePair[ 0 ].connect( tilePair[ 1 ], inliers ); }
+                tilePair[ 0 ].clearVirtualMatches();
+            }
+            synchronized ( tilePair[ 1 ] ) { tilePair[ 1 ].clearVirtualMatches(); }
+        }
+    }
+
+
+	final static protected class MatchFeaturesAndFindModelCallable implements Callable<MatchVoodoo>,
+            Serializable
 	{
 		final protected Param p;
 		//final protected HashMap< AbstractAffineTile2D< ? >, Collection< Feature > > tileFeatures;
@@ -537,85 +572,83 @@ public class Align
 		}
 		
 		@Override
-		final public Boolean call()
+		final public MatchVoodoo call()
 		{
 			final List< PointMatch > candidates = new ArrayList< PointMatch >();
-				
-			{
-				if (Thread.interrupted()) return false;
-				candidates.clear();
 
-				Collection< PointMatch > inliers = deserializePointMatches( p, tilePair[ 0 ], tilePair[ 1 ] );
-				
-				if ( inliers == null )
-				{
-					inliers = new ArrayList< PointMatch >();
-					
-					final long s = System.currentTimeMillis();
-					
-					FeatureTransform.matchFeatures(
-						fetchFeatures( p, tilePair[ 0 ] ),
-						fetchFeatures( p, tilePair[ 1 ] ),
-						candidates,
-						p.rod );
+            if (Thread.interrupted()) return null;
+            candidates.clear();
+
+            Collection< PointMatch > inliers = deserializePointMatches( p, tilePair[ 0 ], tilePair[ 1 ] );
+
+            if ( inliers == null )
+            {
+                inliers = new ArrayList< PointMatch >();
+
+                final long s = System.currentTimeMillis();
+
+                FeatureTransform.matchFeatures(
+                        fetchFeatures( p, tilePair[ 0 ] ),
+                        fetchFeatures( p, tilePair[ 1 ] ),
+                        candidates,
+                        p.rod );
 					
 					/* find the model */
-					final AbstractAffineModel2D< ? > model;
-					switch ( p.expectedModelIndex )
-					{
-					case 0:
-						model = new TranslationModel2D();
-						break;
-					case 1:
-						model = new RigidModel2D();
-						break;
-					case 2:
-						model = new SimilarityModel2D();
-						break;
-					case 3:
-						model = new AffineModel2D();
-						break;
-					default:
-						return false;
-					}
-		
-					final boolean modelFound = findModel(
-							model,
-							candidates,
-							inliers,
-							p.maxEpsilon,
-							p.minInlierRatio,
-							p.minNumInliers,
-							p.rejectIdentity,
-							p.identityTolerance );
-					
-					if ( modelFound )
-						Utils.log( "Model found for tiles \"" + tilePair[ 0 ].getPatch() + "\" and \"" + tilePair[ 1 ].getPatch() + "\":\n  correspondences  " + inliers.size() + " of " + candidates.size() + "\n  average residual error  " + model.getCost() + " px\n  took " + ( System.currentTimeMillis() - s ) + " ms" );
-					else
-						Utils.log( "No model found for tiles \"" + tilePair[ 0 ].getPatch() + "\" and \"" + tilePair[ 1 ].getPatch() + "\":\n  correspondence candidates  " + candidates.size() + "\n  took " + ( System.currentTimeMillis() - s ) + " ms" );
-					
-					if ( !serializePointMatches( p, tilePair[ 0 ], tilePair[ 1 ], inliers ) )
-						Utils.log( "Saving point matches failed for tiles \"" + tilePair[ 0 ].getPatch() + "\" and \"" + tilePair[ 1 ].getPatch() + "\"" );
+                final AbstractAffineModel2D< ? > model;
+                switch ( p.expectedModelIndex )
+                {
+                    case 0:
+                        model = new TranslationModel2D();
+                        break;
+                    case 1:
+                        model = new RigidModel2D();
+                        break;
+                    case 2:
+                        model = new SimilarityModel2D();
+                        break;
+                    case 3:
+                        model = new AffineModel2D();
+                        break;
+                    default:
+                        return null;
+                }
 
-				}
-				else
-					Utils.log( "Point matches for tiles \"" + tilePair[ 0 ].getPatch().getTitle() + "\" and \"" + tilePair[ 1 ].getPatch().getTitle() + "\" fetched from disk cache" );
-				
-				if ( inliers != null && inliers.size() > 0 )
-				{
+                final boolean modelFound = findModel(
+                        model,
+                        candidates,
+                        inliers,
+                        p.maxEpsilon,
+                        p.minInlierRatio,
+                        p.minNumInliers,
+                        p.rejectIdentity,
+                        p.identityTolerance );
+
+                if ( modelFound )
+                    Utils.log( "Model found for tiles \"" + tilePair[ 0 ].getPatch() + "\" and \"" + tilePair[ 1 ].getPatch() + "\":\n  correspondences  " + inliers.size() + " of " + candidates.size() + "\n  average residual error  " + model.getCost() + " px\n  took " + ( System.currentTimeMillis() - s ) + " ms" );
+                else
+                    Utils.log( "No model found for tiles \"" + tilePair[ 0 ].getPatch() + "\" and \"" + tilePair[ 1 ].getPatch() + "\":\n  correspondence candidates  " + candidates.size() + "\n  took " + ( System.currentTimeMillis() - s ) + " ms" );
+
+                if ( !serializePointMatches( p, tilePair[ 0 ], tilePair[ 1 ], inliers ) )
+                    Utils.log( "Saving point matches failed for tiles \"" + tilePair[ 0 ].getPatch() + "\" and \"" + tilePair[ 1 ].getPatch() + "\"" );
+
+            }
+            else
+                Utils.log( "Point matches for tiles \"" + tilePair[ 0 ].getPatch().getTitle() + "\" and \"" + tilePair[ 1 ].getPatch().getTitle() + "\" fetched from disk cache" );
+
+            if ( inliers.size() > 0 )
+            {
 					/* weight the inliers */
-					for ( final PointMatch pm : inliers )
-						pm.setWeights( new float[]{ p.correspondenceWeight } );
-					
-					synchronized ( tilePair[ 0 ] )
-					{
-						synchronized ( tilePair[ 1 ] ) { tilePair[ 0 ].connect( tilePair[ 1 ], inliers ); }
-						tilePair[ 0 ].clearVirtualMatches();
-					}
-					synchronized ( tilePair[ 1 ] ) { tilePair[ 1 ].clearVirtualMatches(); }
-				}
-			}
-            return true;
+                for ( final PointMatch pm : inliers )
+                    pm.setWeights( new float[]{ p.correspondenceWeight } );
+
+                synchronized ( tilePair[ 0 ] )
+                {
+                    synchronized ( tilePair[ 1 ] ) { tilePair[ 0 ].connect( tilePair[ 1 ], inliers ); }
+                    tilePair[ 0 ].clearVirtualMatches();
+                }
+                synchronized ( tilePair[ 1 ] ) { tilePair[ 1 ].clearVirtualMatches(); }
+            }
+            return new MatchVoodoo(tilePair, inliers);
 		}
 	}
 	
@@ -1028,9 +1061,12 @@ public class Align
 		final AtomicInteger ap = new AtomicInteger( 0 );
 		final int steps = tiles.size() + tilePairs.size();
         final List<Future<Boolean>> extractFeaturesFutures = new ArrayList<Future<Boolean>>();
-        final List<Future<Boolean>> matchFeaturesAndFindModelFutures = new ArrayList<Future<Boolean>>();
+        final List<Future<MatchVoodoo>> matchFeaturesAndFindModelFutures =
+                new ArrayList<Future<MatchVoodoo>>();
 
         final ExecutorService es = ExecutorProvider.getExecutorService(1);
+
+        IJ.log("Using ExecutorService of type " + es.getClass().getName());
 
         boolean err = false;
 
@@ -1083,8 +1119,8 @@ public class Align
 		}
 		try
 		{
-			for ( final Future<Boolean> future :
-                    new ArrayList<Future<Boolean>>(matchFeaturesAndFindModelFutures) )
+			for ( final Future<MatchVoodoo> future :
+                    new ArrayList<Future<MatchVoodoo>>(matchFeaturesAndFindModelFutures) )
             {
                 matchFeaturesAndFindModelFutures.remove(future);
 				future.get();
@@ -1103,7 +1139,7 @@ public class Align
         if (err)
         {
             Utils.log( "Establishing feature correspondences interrupted." );
-            for ( final Future<Boolean> future : matchFeaturesAndFindModelFutures )
+            for ( final Future<MatchVoodoo> future : matchFeaturesAndFindModelFutures )
             {
                 future.cancel(true);
             }
