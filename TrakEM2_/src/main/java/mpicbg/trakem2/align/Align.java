@@ -11,6 +11,7 @@ import ini.trakem2.display.Displayable;
 import ini.trakem2.display.Layer;
 import ini.trakem2.display.Patch;
 import ini.trakem2.display.Selection;
+import ini.trakem2.parallel.ExecutorProvider;
 import ini.trakem2.persistence.FSLoader;
 import ini.trakem2.persistence.Loader;
 import ini.trakem2.utils.Filter;
@@ -25,6 +26,10 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import mpicbg.ij.FeatureTransform;
@@ -457,7 +462,7 @@ public class Align
 	 * Extracts {@link Feature SIFT-features} from a {@link List} of
 	 * {@link AbstractAffineTile2D Tiles} and saves them to disk.
 	 */
-	final static protected class ExtractFeaturesThread extends Thread
+	final static protected class ExtractFeaturesCallable implements Callable<Boolean>
 	{
 		final protected Param p;
 		final protected List< AbstractAffineTile2D< ? > > tiles;
@@ -466,13 +471,13 @@ public class Align
 		final protected AtomicInteger ap;
 		final protected int steps;
 		
-		public ExtractFeaturesThread(
-				final Param p,
-				final List< AbstractAffineTile2D< ? > > tiles,
+		public ExtractFeaturesCallable(
+                final Param p,
+                final List<AbstractAffineTile2D<?>> tiles,
 //				final HashMap< AbstractAffineTile2D< ? >, Collection< Feature > > tileFeatures,
-				final AtomicInteger ai,
-				final AtomicInteger ap,
-				final int steps )
+                final AtomicInteger ai,
+                final AtomicInteger ap,
+                final int steps)
 		{
 			this.p = p;
 			this.tiles = tiles;
@@ -482,14 +487,14 @@ public class Align
 		}
 		
 		@Override
-		final public void run()
+		final public Boolean call() throws Exception
 		{
 			final FloatArray2DSIFT sift = new FloatArray2DSIFT( p.sift );
 			final SIFT ijSIFT = new SIFT( sift );
 
-			for ( int i = ai.getAndIncrement(); i < tiles.size() && !isInterrupted(); i = ai.getAndIncrement() )
+			for ( int i = ai.getAndIncrement(); i < tiles.size() && !Thread.interrupted(); i = ai.getAndIncrement() )
 			{
-				if (isInterrupted()) return;
+				if (Thread.interrupted()) return false;
 				final AbstractAffineTile2D< ? > tile = tiles.get( i );
 				Collection< Feature > features = deserializeFeatures( p, tile );
 				if ( features == null )
@@ -523,11 +528,12 @@ public class Align
 				}
 				IJ.showProgress( ap.getAndIncrement(), steps );				
 			}
+            return true;
 		}
 	}
 		
 	
-	final static protected class MatchFeaturesAndFindModelThread extends Thread
+	final static protected class MatchFeaturesAndFindModelCallable implements Callable<Boolean>
 	{
 		final protected Param p;
 		final protected List< AbstractAffineTile2D< ? > > tiles;
@@ -537,13 +543,13 @@ public class Align
 		final protected AtomicInteger ap;
 		final protected int steps;
 		
-		public MatchFeaturesAndFindModelThread(
-				final Param p,
-				final List< AbstractAffineTile2D< ? > > tiles,
-				final List< AbstractAffineTile2D< ? >[] > tilePairs,
-				final AtomicInteger ai,
-				final AtomicInteger ap,
-				final int steps )
+		public MatchFeaturesAndFindModelCallable(
+                final Param p,
+                final List<AbstractAffineTile2D<?>> tiles,
+                final List<AbstractAffineTile2D<?>[]> tilePairs,
+                final AtomicInteger ai,
+                final AtomicInteger ap,
+                final int steps)
 		{
 			this.p = p;
 			this.tiles = tiles;
@@ -554,13 +560,13 @@ public class Align
 		}
 		
 		@Override
-		final public void run()
+		final public Boolean call()
 		{
 			final List< PointMatch > candidates = new ArrayList< PointMatch >();
 				
-			for ( int i = ai.getAndIncrement(); i < tilePairs.size() && !isInterrupted(); i = ai.getAndIncrement() )
+			for ( int i = ai.getAndIncrement(); i < tilePairs.size() && !Thread.interrupted(); i = ai.getAndIncrement() )
 			{
-				if (isInterrupted()) return;
+				if (Thread.interrupted()) return false;
 				candidates.clear();
 				final AbstractAffineTile2D< ? >[] tilePair = tilePairs.get( i );
 				
@@ -595,7 +601,7 @@ public class Align
 						model = new AffineModel2D();
 						break;
 					default:
-						return;
+						return false;
 					}
 		
 					final boolean modelFound = findModel(
@@ -636,6 +642,7 @@ public class Align
 				
 				IJ.showProgress( ap.getAndIncrement(), steps );
 			}
+            return true;
 		}
 	}
 	
@@ -1047,65 +1054,89 @@ public class Align
 		final AtomicInteger ai = new AtomicInteger( 0 );
 		final AtomicInteger ap = new AtomicInteger( 0 );
 		final int steps = tiles.size() + tilePairs.size();
-		final List< ExtractFeaturesThread > extractFeaturesThreads = new ArrayList< ExtractFeaturesThread >();
-		final List< MatchFeaturesAndFindModelThread > matchFeaturesAndFindModelThreads = new ArrayList< MatchFeaturesAndFindModelThread >();
-		
+		final List<ExtractFeaturesCallable> extractFeaturesCallables = new ArrayList<ExtractFeaturesCallable>();
+		final List<MatchFeaturesAndFindModelCallable> matchFeaturesAndFindModelThreads = new ArrayList<MatchFeaturesAndFindModelCallable>();
+        final List<Future<Boolean>> extractFeaturesFutures = new ArrayList<Future<Boolean>>();
+        final List<Future<Boolean>> matchFeaturesAndFindModelFutures = new ArrayList<Future<Boolean>>();
+
+        final ExecutorService es = ExecutorProvider.getExecutorService(1);
+
+        boolean err = false;
+
 		/** Extract and save Features */
 		for ( int i = 0; i < numThreads; ++i )
 		{
-			final ExtractFeaturesThread thread = new ExtractFeaturesThread( p.clone(), tiles, ai, ap, steps );
-			extractFeaturesThreads.add( thread );
-			thread.start();
+			final ExtractFeaturesCallable callable = new ExtractFeaturesCallable( p.clone(), tiles, ai, ap, steps );
+			extractFeaturesFutures.add(es.submit(callable));
 		}
-		
+
 		try
 		{
-			for ( final ExtractFeaturesThread thread : extractFeaturesThreads )
-				thread.join();
+			for ( final Future<Boolean> future :
+                    new ArrayList<Future<Boolean>> (extractFeaturesFutures) )
+            {
+                extractFeaturesFutures.remove(future);
+                future.get();
+            }
+
 		}
 		catch ( final InterruptedException e )
 		{
-			Utils.log( "Feature extraction interrupted." );
-			for ( final Thread thread : extractFeaturesThreads )
-				thread.interrupt();
-			try
-			{
-				for ( final Thread thread : extractFeaturesThreads )
-					thread.join();
-			}
-			catch ( final InterruptedException f ) {}
-			Thread.currentThread().interrupt();
-			IJ.showProgress( 1.0 );
-			return;
+			err = true;
 		}
+        catch ( final ExecutionException e )
+        {
+            err = true;
+        }
+
+        if (err)
+        {
+            Utils.log( "Feature extraction failed or was interrupted." );
+            for ( final Future<Boolean> future : extractFeaturesFutures)
+            {
+                future.cancel(true);
+            }
+            Thread.currentThread().interrupt();
+            IJ.showProgress( 1.0 );
+            return;
+        }
 		
 		/** Establish correspondences */
 		ai.set( 0 );
 		for ( int i = 0; i < numThreads; ++i )
 		{
-			final MatchFeaturesAndFindModelThread thread = new MatchFeaturesAndFindModelThread( p.clone(), tiles, tilePairs, ai, ap, steps );
-			matchFeaturesAndFindModelThreads.add( thread );
-			thread.start();
+			final MatchFeaturesAndFindModelCallable callable =
+                    new MatchFeaturesAndFindModelCallable( p.clone(), tiles, tilePairs, ai, ap, steps );
+			matchFeaturesAndFindModelFutures.add(es.submit(callable));
 		}
 		try
 		{
-			for ( final MatchFeaturesAndFindModelThread thread : matchFeaturesAndFindModelThreads )
-				thread.join();
+			for ( final Future<Boolean> future :
+                    new ArrayList<Future<Boolean>>(matchFeaturesAndFindModelFutures) )
+            {
+                matchFeaturesAndFindModelFutures.remove(future);
+				future.get();
+            }
 		}
 		catch ( final InterruptedException e )
 		{
-			Utils.log( "Establishing feature correspondences interrupted." );
-			for ( final Thread thread : matchFeaturesAndFindModelThreads )
-				thread.interrupt();
-			try
-			{
-				for ( final Thread thread : matchFeaturesAndFindModelThreads )
-					thread.join();
-			}
-			catch ( final InterruptedException f ) {}
-			Thread.currentThread().interrupt();
-			IJ.showProgress( 1.0 );
+			err = true;
 		}
+        catch ( final ExecutionException ee)
+        {
+            err = true;
+        }
+
+        if (err)
+        {
+            Utils.log( "Establishing feature correspondences interrupted." );
+            for ( final Future<Boolean> future : matchFeaturesAndFindModelFutures )
+            {
+                future.cancel(true);
+            }
+            Thread.currentThread().interrupt();
+            IJ.showProgress( 1.0 );
+        }
 	}
 	
 	
