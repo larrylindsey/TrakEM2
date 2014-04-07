@@ -530,33 +530,21 @@ public class Align
      * on the root node computer, where it does some things behind the scenes to fake some
      * side-effects that wouldn't be apparent otherwise.
      */
-	final static protected class MatchVoodoo implements Serializable
+	final static protected class PatchMatchResult implements Serializable
     {
         private final AbstractAffineTile2D<?>[] tilePair;
         private final Collection<PointMatch> inliers;
 
-        public MatchVoodoo(final AbstractAffineTile2D<?>[] tilePair,
-                                  final Collection<PointMatch> inliers)
+        public PatchMatchResult(final AbstractAffineTile2D<?>[] tilePair,
+                                final Collection<PointMatch> inliers)
         {
             this.tilePair = tilePair;
             this.inliers = inliers;
         }
-
-        private void readObject(ObjectInputStream ois) throws ClassNotFoundException, IOException
-        {
-            ois.defaultReadObject();
-
-            synchronized ( tilePair[ 0 ] )
-            {
-                synchronized ( tilePair[ 1 ] ) { tilePair[ 0 ].connect( tilePair[ 1 ], inliers ); }
-                tilePair[ 0 ].clearVirtualMatches();
-            }
-            synchronized ( tilePair[ 1 ] ) { tilePair[ 1 ].clearVirtualMatches(); }
-        }
     }
 
 
-	final static protected class MatchFeaturesAndFindModelCallable implements Callable<MatchVoodoo>,
+	final static protected class MatchFeaturesAndFindModelCallable implements Callable<PatchMatchResult>,
             Serializable
 	{
 		final protected Param p;
@@ -572,7 +560,7 @@ public class Align
 		}
 		
 		@Override
-		final public MatchVoodoo call()
+		final public PatchMatchResult call()
 		{
 			final List< PointMatch > candidates = new ArrayList< PointMatch >();
 
@@ -641,14 +629,14 @@ public class Align
                 for ( final PointMatch pm : inliers )
                     pm.setWeights( new float[]{ p.correspondenceWeight } );
 
-                synchronized ( tilePair[ 0 ] )
-                {
-                    synchronized ( tilePair[ 1 ] ) { tilePair[ 0 ].connect( tilePair[ 1 ], inliers ); }
-                    tilePair[ 0 ].clearVirtualMatches();
-                }
-                synchronized ( tilePair[ 1 ] ) { tilePair[ 1 ].clearVirtualMatches(); }
+//                synchronized ( tilePair[ 0 ] )
+//                {
+//                    synchronized ( tilePair[ 1 ] ) { tilePair[ 0 ].connect( tilePair[ 1 ], inliers ); }
+//                    tilePair[ 0 ].clearVirtualMatches();
+//                }
+//                synchronized ( tilePair[ 1 ] ) { tilePair[ 1 ].clearVirtualMatches(); }
             }
-            return new MatchVoodoo(tilePair, inliers);
+            return new PatchMatchResult(tilePair, inliers);
 		}
 	}
 	
@@ -1061,8 +1049,8 @@ public class Align
 		final AtomicInteger ap = new AtomicInteger( 0 );
 		final int steps = tiles.size() + tilePairs.size();
         final List<Future<Boolean>> extractFeaturesFutures = new ArrayList<Future<Boolean>>();
-        final List<Future<MatchVoodoo>> matchFeaturesAndFindModelFutures =
-                new ArrayList<Future<MatchVoodoo>>();
+        final List<Future<PatchMatchResult>> matchFeaturesAndFindModelFutures =
+                new ArrayList<Future<PatchMatchResult>>();
 
         final ExecutorService es = ExecutorProvider.getExecutorService(1);
 
@@ -1119,11 +1107,28 @@ public class Align
 		}
 		try
 		{
-			for ( final Future<MatchVoodoo> future :
-                    new ArrayList<Future<MatchVoodoo>>(matchFeaturesAndFindModelFutures) )
+			for ( final Future<PatchMatchResult> future :
+                    new ArrayList<Future<PatchMatchResult>>(matchFeaturesAndFindModelFutures) )
             {
+                PatchMatchResult pmr = future.get();
+                final Collection<PointMatch> inliers = pmr.inliers;
+                AbstractAffineTile2D<?>[] tilePair = pmr.tilePair;
+
                 matchFeaturesAndFindModelFutures.remove(future);
-				future.get();
+
+                if (inliers.size() > 0)
+                {
+                    synchronized ( tilePair[ 0 ] )
+                    {
+                        synchronized ( tilePair[ 1 ] )
+                        {
+                            tilePair[ 0 ].connect( tilePair[ 1 ], inliers );
+                        }
+                        tilePair[ 0 ].clearVirtualMatches();
+                    }
+                    synchronized ( tilePair[ 1 ] ) { tilePair[ 1 ].clearVirtualMatches(); }
+                }
+
                 IJ.showProgress( ai.getAndIncrement(), steps );
             }
 		}
@@ -1139,12 +1144,21 @@ public class Align
         if (err)
         {
             Utils.log( "Establishing feature correspondences interrupted." );
-            for ( final Future<MatchVoodoo> future : matchFeaturesAndFindModelFutures )
+            for ( final Future<PatchMatchResult> future : matchFeaturesAndFindModelFutures )
             {
                 future.cancel(true);
             }
             Thread.currentThread().interrupt();
             IJ.showProgress( 1.0 );
+        }
+        else
+        {
+            for (final AbstractAffineTile2D<?> tile : tiles)
+            {
+                System.out.println("Tile " + tile.getPatch().getTitle() + " matched to " +
+                        tile.getMatches().size() + " other tiles, with " +
+                        tile.getVirtualMatches().size() + " virtual matches");
+            }
         }
 	}
 	
