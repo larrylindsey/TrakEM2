@@ -125,7 +125,8 @@ final public class AlignmentUtils
 			final int numThreads ) throws ExecutionException, InterruptedException
 	{
         final long sTime = System.currentTimeMillis();
-		final ExecutorService exec = ExecutorProvider.getExecutorService(1.0f / (float)numThreads);
+		final ExecutorService exec = ExecutorProvider.getExecutorService("affine layer alignment",
+                1.0f / (float)numThreads);
 		
 		/* extract features for all slices and store them to disk */
 		final AtomicInteger counter = new AtomicInteger( 0 );

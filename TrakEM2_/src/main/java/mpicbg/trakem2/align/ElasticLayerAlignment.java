@@ -398,7 +398,8 @@ public class ElasticLayerAlignment
 			final boolean propagateTransformAfter,
 			final Filter< Patch > filter ) throws Exception
 	{
-        ExecutorService service = ExecutorProvider.getExecutorService(1.0f);
+        ExecutorService service = ExecutorProvider.getExecutorService("elastic layer alignment",
+                1.0f);
 		
 		
 		/* create tiles and models for all layers */

@@ -274,7 +274,8 @@ public class RegularizedAffineLayerAlignment
 	{
 		final double scale = Math.min( 1.0, Math.min( ( double )param.ppm.sift.maxOctaveSize / ( double )box.width, ( double )param.ppm.sift.maxOctaveSize / ( double )box.height ) );
 
-        final ExecutorService exec = ExecutorProvider.getExecutorService(1.0f / (float)param.maxNumThreads);
+        final ExecutorService exec = ExecutorProvider.getExecutorService("affine layer alignment",
+                1.0f / (float)param.maxNumThreads);
 
 		/* create tiles and models for all layers */
 		final ArrayList< Tile< ? > > tiles = new ArrayList< Tile< ? > >();

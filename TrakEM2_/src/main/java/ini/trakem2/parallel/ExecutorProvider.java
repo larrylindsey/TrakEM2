@@ -8,7 +8,8 @@ import java.util.concurrent.ExecutorService;
 public abstract class ExecutorProvider
 {
 
-    private static ExecutorProvider provider = new DefaultExecutorProvider();
+    private static ExecutorProvider localProvider = new DefaultExecutorProvider();
+    private static ExecutorProvider provider = localProvider;
 
     /**
      * Returns an ExecutorService for Callables that use nThreads number of threads.
@@ -18,9 +19,9 @@ public abstract class ExecutorProvider
      * Runtime.getRuntime().availableProcessors() ), calling getExecutorService(2) will return
      * an ExecutorService that will run 2 ( 4 / 2 ) Callables at a time.
      */
-    public static ExecutorService getExecutorService(final int nThreads)
+    public static ExecutorService getExecutorService(final String identifier, final int nThreads)
     {
-        return provider.getService(nThreads);
+        return provider.getService(identifier, nThreads);
     }
 
     /**
@@ -32,14 +33,31 @@ public abstract class ExecutorProvider
      * that will run only one Callable at a time.
      */
 
-    public static ExecutorService getExecutorService(final float fractionThreads)
+    public static ExecutorService getExecutorService(final String identifier,
+                                                     final float fractionThreads)
     {
-        return provider.getService(fractionThreads);
+        return provider.getService(identifier, fractionThreads);
+    }
+
+    public static ExecutorService getLocalExecutorService(final String identifier,
+                                                          final int nThreads)
+    {
+         return localProvider.getService(identifier, nThreads);
+    }
+
+    public static ExecutorService getLocalExecutorService(final String identifier,
+                                                          final float fractionThreads)
+    {
+        return localProvider.getService(identifier, fractionThreads);
     }
 
     public static void setProvider(final ExecutorProvider ep)
     {
         provider = ep;
+        if (provider.isLocal())
+        {
+            localProvider = ep;
+        }
     }
 
     public static ExecutorProvider getProvider()
@@ -47,8 +65,11 @@ public abstract class ExecutorProvider
         return provider;
     }
 
-    public abstract ExecutorService getService(int nThreads);
+    public abstract ExecutorService getService(final String identifier,
+                                               int nThreads);
 
-    public abstract ExecutorService getService(float fractionThreads);
+    public abstract ExecutorService getService(final String identifier,
+                                               float fractionThreads);
 
+    public abstract boolean isLocal();
 }

@@ -509,7 +509,7 @@ public class ElasticMontage
         final ArrayList<Future<BlockMatchPatchCallable.BlockMatchResults>> blockMatchFutures =
                 new ArrayList<Future<BlockMatchPatchCallable.BlockMatchResults>>(pairs.size());
 
-        final ExecutorService es = ExecutorProvider.getExecutorService(1);
+        final ExecutorService es = ExecutorProvider.getExecutorService("elastic montage", 1);
 		
 		for ( final Triple< AbstractAffineTile2D< ? >, AbstractAffineTile2D< ? >, InvertibleCoordinateTransform > pair : pairs )
 		{

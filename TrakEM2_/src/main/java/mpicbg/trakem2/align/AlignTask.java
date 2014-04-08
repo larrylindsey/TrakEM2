@@ -15,6 +15,7 @@ import ini.trakem2.display.Selection;
 import ini.trakem2.display.VectorData;
 import ini.trakem2.display.VectorDataTransform;
 import ini.trakem2.imaging.StitchingTEM;
+import ini.trakem2.parallel.ExecutorProvider;
 import ini.trakem2.persistence.DBObject;
 import ini.trakem2.utils.Bureaucrat;
 import ini.trakem2.utils.IJError;
@@ -36,8 +37,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import mpicbg.ij.FeatureTransform;
 import mpicbg.ij.SIFT;
@@ -309,23 +313,58 @@ final public class AlignTask
 			final boolean largestGraphOnlyIn,
 			final boolean hideDisconnectedTilesIn,
 			final boolean deleteDisconnectedTilesIn ) {
+        // this is where the magic happens
 		int i = 0;
+        final ExecutorService es = ExecutorProvider.getLocalExecutorService("affine montage", 1);
+        final ArrayList<Future<Boolean>> futures = new ArrayList<Future<Boolean>>(layers.size());
+        final AtomicInteger ai = new AtomicInteger(0);
 		for (final Layer layer : layers) {
-			if (Thread.currentThread().isInterrupted()) return;
-			final Collection<Displayable> patches = layer.getDisplayables(Patch.class, true);
-			if (patches.isEmpty()) continue;
-			for (final Displayable patch : patches) {
-				if (patch.isLinked() && !patch.isOnlyLinkedTo(Patch.class)) {
-					Utils.log("Cannot montage layer " + layer + "\nReason: at least one Patch is linked to non-image data: " + patch);
-					continue;
-				}
-			}
-			Utils.log("====\nMontaging layer " + layer);
-			Utils.showProgress(((double)i)/layers.size());
-			i++;
-			alignPatches(p, new ArrayList<Patch>((Collection<Patch>)(Collection)patches), new ArrayList<Patch>(), tilesAreInPlaceIn, largestGraphOnlyIn, hideDisconnectedTilesIn, deleteDisconnectedTilesIn );
-			Display.repaint(layer);
+            Callable<Boolean> montageCallable = new Callable<Boolean>()
+            {
+                public Boolean call()
+                {
+
+                    if (Thread.currentThread().isInterrupted()) return false;
+                    final Collection<Displayable> patches = layer.getDisplayables(Patch.class, true);
+                    if (patches.isEmpty()) return false;
+                    for (final Displayable patch : patches) {
+                        if (patch.isLinked() && !patch.isOnlyLinkedTo(Patch.class)) {
+                            Utils.log("Cannot montage layer " + layer
+                                    + "\nReason: at least one Patch is linked to non-image data: " + patch);
+                            return false;
+                        }
+                    }
+                    Utils.log("====\nMontaging layer " + layer);
+                    Utils.showProgress(((double) ai.getAndIncrement()) / layers.size());
+                    alignPatches(p,
+                            new ArrayList<Patch>((Collection<Patch>)(Collection)patches),
+                            new ArrayList<Patch>(),
+                            tilesAreInPlaceIn, largestGraphOnlyIn,
+                            hideDisconnectedTilesIn, deleteDisconnectedTilesIn );
+                    Display.repaint(layer);
+                    return true;
+                }
+            };
+
+            futures.add(es.submit(montageCallable));
 		}
+
+        for (final Future<Boolean> future: futures)
+        {
+            try
+            {
+                future.get();
+            }
+            catch (InterruptedException ie)
+            {
+                Utils.log("Interrupted while montaging patches");
+            }
+            catch (ExecutionException ee)
+            {
+                ee.printStackTrace(System.err);
+                Utils.log("Error while montaging: " + ee);
+            }
+        }
 	}
 	
 	
@@ -811,12 +850,12 @@ A:		for ( final Layer layer : layers )
 		Align.tilesFromPatches( p, patches, fixedPatches, tiles, fixedTiles );
 
 		transformPatchesAndVectorData(patches, new Runnable() {
-			@Override
-			public void run() {
-				alignTiles( p, tiles, fixedTiles, tilesAreInPlaceIn, largestGraphOnlyIn, hideDisconnectedTilesIn, deleteDisconnectedTilesIn );
-				Display.repaint();
-			}
-		});
+            @Override
+            public void run() {
+                alignTiles(p, tiles, fixedTiles, tilesAreInPlaceIn, largestGraphOnlyIn, hideDisconnectedTilesIn, deleteDisconnectedTilesIn);
+                Display.repaint();
+            }
+        });
 	}
 
 	final static public void alignTiles(
@@ -1543,7 +1582,7 @@ A:		for ( final Layer layer : layers )
 		final List<Patch> fixedSlices = new ArrayList<Patch>();
 		fixedSlices.add(slice);
 
-		alignPatches( p, slices, fixedSlices, false, false, false, false );
+		alignPatches(p, slices, fixedSlices, false, false, false, false);
 
 		Display.repaint();
 

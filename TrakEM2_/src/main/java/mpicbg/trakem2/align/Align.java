@@ -1052,7 +1052,7 @@ public class Align
         final List<Future<PatchMatchResult>> matchFeaturesAndFindModelFutures =
                 new ArrayList<Future<PatchMatchResult>>();
 
-        final ExecutorService es = ExecutorProvider.getExecutorService(1);
+        final ExecutorService es = ExecutorProvider.getExecutorService("affine montage", 1);
 
         IJ.log("Using ExecutorService of type " + es.getClass().getName());
 
